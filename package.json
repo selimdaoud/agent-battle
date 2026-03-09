@@ -9,7 +9,7 @@
     "backtest": "node backtester/backtest.js"
   },
   "dependencies": {
-    "better-sqlite3": "^12.6.2",
+    "better-sqlite3": "^9.6.0",
     "blessed": "^0.1.81",
     "blessed-contrib": "^4.11.0",
     "dotenv": "^16.4.5",
