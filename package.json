@@ -1,0 +1,21 @@
+{
+  "name": "agent-battle-gpt",
+  "version": "2.0.0",
+  "main": "engine.js",
+  "scripts": {
+    "start": "node engine.js",
+    "api": "node api.js",
+    "dashboard": "node dashboard/tui.js",
+    "backtest": "node backtester/backtest.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.6.2",
+    "blessed": "^0.1.81",
+    "blessed-contrib": "^4.11.0",
+    "dotenv": "^16.4.5",
+    "express": "^5.0.1",
+    "openai": "^4.38.0",
+    "simple-statistics": "^7.8.8",
+    "ws": "^8.17.0"
+  }
+}

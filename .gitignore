@@ -1,0 +1,12 @@
+# Environment — never commit secrets
+.env
+
+# Database — runtime state, not source code
+data/sim.db
+data/ohlcv/
+
+# Dependencies
+node_modules/
+
+# macOS
+.DS_Store

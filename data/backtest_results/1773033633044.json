@@ -1,0 +1,26 @@
+{
+  "pairs": [
+    "BTCUSDT",
+    "ETHUSDT"
+  ],
+  "period": 30,
+  "interval": "1h",
+  "inSample": {
+    "bars": 540,
+    "sharpe": 2.1089923808149784,
+    "maxDrawdown": 0.6621258652529054,
+    "winRate": 0,
+    "profitFactor": 0,
+    "totalReturn": -0.1388471917536277,
+    "trades": 23
+  },
+  "holdout": {
+    "bars": 180,
+    "sharpe": -2.5368664035240056,
+    "maxDrawdown": 0.3574995615365763,
+    "winRate": 0.5,
+    "profitFactor": 0.1904383396437749,
+    "totalReturn": -0.3545929957260085,
+    "trades": 8
+  }
+}
