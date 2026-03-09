@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -e
 
+# ── Check for spaces in path (breaks native module compilation) ───────────────
+if [[ "$PWD" == *" "* ]]; then
+  echo "Error: the project path contains a space: $PWD" >&2
+  echo "Rename the directory to remove spaces (e.g. agent-battle-gpt) and retry." >&2
+  exit 1
+fi
+
 # ── Check Node.js ─────────────────────────────────────────────────────────────
 if ! command -v node &>/dev/null; then
   echo "Error: Node.js is not installed. Please install Node.js 20 LTS from https://nodejs.org" >&2
@@ -8,8 +15,9 @@ if ! command -v node &>/dev/null; then
 fi
 
 NODE_MAJOR=$(node -e "process.stdout.write(String(process.versions.node.split('.')[0]))")
-if [ "$NODE_MAJOR" -lt 18 ]; then
-  echo "Error: Node.js 18+ required (found v$(node -v | tr -d v))" >&2
+if [ "$NODE_MAJOR" -lt 20 ]; then
+  echo "Error: Node.js 20+ required (found v$(node -v | tr -d v))" >&2
+  echo "Install Node.js 20 LTS via nvm: nvm install 20 && nvm use 20" >&2
   exit 1
 fi
 
