@@ -118,7 +118,7 @@ Your survival score rewards low drawdown more than raw returns.`,
     ALPHA: {
       buy_signal:    _ALPHA_MOMENTUM_THRESHOLD, // min signal_score to enter (0.30)
       sell_signal:   -0.15,  // signal_score at which ALPHA exits
-      cvd_buy_min:    0.10,  // min cvd_norm to confirm buy flow
+      cvd_buy_min:    0.00,  // min cvd_norm to confirm buy flow (0 = don't require positive CVD)
       cvd_sell_max:  -0.30,  // cvd below which ALPHA exits regardless of price signal
       funding_buy_max: 0.50, // max funding_signal allowed (avoid buying already-crowded longs)
       buy_size_pct:   0.25,  // fraction of capital per BUY
@@ -133,8 +133,8 @@ Your survival score rewards low drawdown more than raw returns.`,
     },
 
     GAMMA: {
-      buy_signal:      0.50,  // min signal_score — high quality bar
-      cvd_buy_min:     0.20,  // min cvd to confirm buy flow
+      buy_signal:      0.40,  // min signal_score — high quality bar
+      cvd_buy_min:     0.10,  // min cvd to confirm buy flow
       funding_buy_max: 0.60,  // max funding_signal (do not buy already-crowded longs)
       sell_loss_pct:   5,     // exit if unrealized loss exceeds this % (tighter than auto-stop)
       sell_profit_pct: 10,    // take profit at this % gain if flow turns
