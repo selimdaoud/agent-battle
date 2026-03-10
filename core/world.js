@@ -5,7 +5,7 @@ const Database = require('better-sqlite3')
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 // These are defined before C so they can be interpolated into ARCHETYPES strings
-const _ALPHA_MOMENTUM_THRESHOLD = 0.3   // signal_score above which ALPHA seeks momentum buys
+const _ALPHA_MOMENTUM_THRESHOLD = 0.12  // signal_score above which ALPHA seeks momentum buys
 const _BETA_OVERSOLD_SIGNAL     = -0.3  // signal_score below which BETA looks for contrarian buys
 const _BETA_OVERSOLD_RSI        = 40    // RSI below which BETA considers an asset oversold
 
@@ -107,8 +107,8 @@ Your survival score rewards low drawdown more than raw returns.`,
   REGIME_MULTIPLIERS: {
     trending_up:   1.0,
     trending_down: 1.0,
-    ranging:       0.6,
-    volatile:      0.3
+    ranging:       0.9,
+    volatile:      0.5
   },
 
   // ── Strategy engine thresholds (core/strategy.js) ───────────────────────────
@@ -116,7 +116,7 @@ Your survival score rewards low drawdown more than raw returns.`,
     SYNTHESIS_EVERY_N_ROUNDS: 20,  // how often the LLM generates personality & market view
 
     ALPHA: {
-      buy_signal:    _ALPHA_MOMENTUM_THRESHOLD, // min signal_score to enter (0.30)
+      buy_signal:    _ALPHA_MOMENTUM_THRESHOLD, // min signal_score to enter (0.12)
       sell_signal:   -0.15,  // signal_score at which ALPHA exits
       cvd_buy_min:    0.00,  // min cvd_norm to confirm buy flow (0 = don't require positive CVD)
       cvd_sell_max:  -0.30,  // cvd below which ALPHA exits regardless of price signal
@@ -133,8 +133,8 @@ Your survival score rewards low drawdown more than raw returns.`,
     },
 
     GAMMA: {
-      buy_signal:      0.40,  // min signal_score — high quality bar
-      cvd_buy_min:     0.10,  // min cvd to confirm buy flow
+      buy_signal:      0.18,  // min signal_score — high quality bar
+      cvd_buy_min:     0.05,  // min cvd to confirm buy flow
       funding_buy_max: 0.60,  // max funding_signal (do not buy already-crowded longs)
       sell_loss_pct:   5,     // exit if unrealized loss exceeds this % (tighter than auto-stop)
       sell_profit_pct: 10,    // take profit at this % gain if flow turns
