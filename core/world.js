@@ -266,7 +266,7 @@ class World {
           const proceeds = t.qty * t.price * (1 - C.SLIPPAGE_PCT)
           agent.capital += proceeds
           agent.holdings[t.pair] = (agent.holdings[t.pair] || 0) - t.qty
-          if (agent.holdings[t.pair] <= 0) {
+          if (agent.holdings[t.pair] <= 1e-10) {
             delete agent.holdings[t.pair]
             delete agent.entryPrices[t.pair]
             delete agent.entryRounds[t.pair]
@@ -568,7 +568,7 @@ class World {
 
         agent.capital += proceeds
         agent.holdings[decision.pair] = (agent.holdings[decision.pair] || 0) - qty
-        if (agent.holdings[decision.pair] <= 0) {
+        if (agent.holdings[decision.pair] <= 1e-10) {
           delete agent.holdings[decision.pair]
           delete agent.entryPrices[decision.pair]
           delete agent.entryRounds[decision.pair]
@@ -719,7 +719,7 @@ class World {
         const now   = currentPrices[pair]
         if (entry && now && now < entry * (1 - C.STOP_LOSS_PCT)) {
           this.applyDecision(name,
-            { action: 'SELL', pair, amount_usd: qty * now, enforced_reason: 'stop_loss' },
+            { action: 'SELL', pair, amount_usd: 0, enforced_reason: 'stop_loss' },
             currentPrices)
         }
       }

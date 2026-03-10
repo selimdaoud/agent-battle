@@ -70,10 +70,42 @@ async function tick(world, openai, emitter) {
   }
 }
 
+// ── Price history warmup ───────────────────────────────────────────────────────
+
+/**
+ * Fetch the last 50 1h closes from Binance for every pair and seed the
+ * in-memory priceHistory so signals are meaningful from round 1.
+ * Only runs when the history is empty (fresh DB — not on restarts).
+ */
+async function _warmHistory(world) {
+  const history = world.getPriceHistory()
+  const isEmpty = Object.values(history).every(h => h.length === 0)
+  if (!isEmpty) return  // already populated from DB replay
+
+  const results = await Promise.allSettled(
+    C.PAIRS.map(async pair => {
+      const url  = `https://api.binance.com/api/v3/klines?symbol=${pair}&interval=1h&limit=50`
+      const bars = await fetch(url, { signal: AbortSignal.timeout(6000) }).then(r => r.json())
+      return [pair, bars.map(b => parseFloat(b[4]))]  // index 4 = close price
+    })
+  )
+
+  for (const result of results) {
+    if (result.status === 'fulfilled') {
+      const [pair, closes] = result.value
+      if (closes.length > 0) history[pair] = closes
+    }
+  }
+}
+
 // ── Scheduler ─────────────────────────────────────────────────────────────────
 const world   = new World('./data/sim.db')
 const openai  = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 const emitter = new EventEmitter()
+
+// Warm up price history in the background — completes well before the user
+// starts the simulation (which requires a manual command or keypress).
+_warmHistory(world).catch(() => {})
 
 let timer      = null
 let busy       = false
