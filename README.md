@@ -19,13 +19,14 @@ A multi-agent trading simulation where three autonomous agents — **ALPHA**, **
 
 1. [Prerequisites](#prerequisites)
 2. [Installation](#installation)
-3. [Configuration](#configuration)
-4. [Running Locally](#running-locally)
-5. [User Tutorial](#user-tutorial)
-6. [Playbook](#playbook)
-7. [Backtester](#backtester)
-8. [Deployment Guide](#deployment-guide)
-9. [Architecture](#architecture)
+3. [Publishing to GitHub](#publishing-to-github)
+4. [Configuration](#configuration)
+5. [Running Locally](#running-locally)
+6. [User Tutorial](#user-tutorial)
+7. [Playbook](#playbook)
+8. [Backtester](#backtester)
+9. [Deployment Guide](#deployment-guide)
+10. [Architecture](#architecture)
 
 ---
 
@@ -51,6 +52,79 @@ Copy the example environment file and fill in your values:
 ```bash
 cp .env.example .env
 ```
+
+---
+
+## Publishing to GitHub
+
+If you cloned this project and want to push it to your own GitHub repository:
+
+### 1. Create a new repository on GitHub
+
+Go to [github.com/new](https://github.com/new), give it a name (e.g. `agent-battle-gpt`), leave it **empty** (no README, no .gitignore), and click **Create repository**.
+
+### 2. Point your local repo at the new remote
+
+```bash
+# Replace the origin with your new repo URL
+git remote set-url origin https://github.com/<your-username>/<your-repo>.git
+
+# Verify it
+git remote -v
+```
+
+If you started from scratch (not a clone), initialise git first:
+
+```bash
+git init
+git remote add origin https://github.com/<your-username>/<your-repo>.git
+```
+
+### 3. Make sure sensitive files are excluded
+
+Check that `.gitignore` covers the files you should never commit:
+
+```
+.env
+data/sim.db
+data/ohlcv/
+data/backtest_results/
+node_modules/
+```
+
+Verify nothing sensitive is staged:
+
+```bash
+git status
+```
+
+### 4. Commit and push
+
+```bash
+git add .
+git commit -m "Initial commit"
+git push -u origin main
+```
+
+If your default branch is named `master` instead of `main`:
+
+```bash
+git push -u origin master
+```
+
+### 5. (Optional) Authenticate with a token
+
+If GitHub prompts for credentials, use a **Personal Access Token** instead of your password:
+
+1. Go to **GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens**
+2. Generate a token with **Contents: Read and Write** permission on your repo
+3. Use it as the password when prompted, or configure it permanently:
+
+```bash
+git remote set-url origin https://<your-username>:<your-token>@github.com/<your-username>/<your-repo>.git
+```
+
+> Alternatively, set up [SSH keys](https://docs.github.com/en/authentication/connecting-to-github-with-ssh) to avoid token management entirely.
 
 ---
 

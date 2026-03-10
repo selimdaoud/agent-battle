@@ -46,9 +46,15 @@ function create(parent) {
                     ` $${Math.round(trade.proceeds_or_cost).toLocaleString()}` +
                     ` @ $${trade.price?.toLocaleString()}{/green-fg}${enforced}`
       append(label, 'TRADE')
+      if (decision && decision.reasoning) {
+        append(`  {cyan-fg}↳ ${decision.reasoning}{/cyan-fg}`, 'TRADE')
+      }
     } else if (decision) {
       const reason = decision.enforced_reason ? ` {yellow-fg}[${decision.enforced_reason}]{/yellow-fg}` : ''
       append(`{grey-fg}${agent} HOLD ${decision.pair || ''}${reason}{/grey-fg}`, 'TRADE')
+      if (decision.reasoning) {
+        append(`  {grey-fg}↳ ${decision.reasoning}{/grey-fg}`, 'TRADE')
+      }
     }
   }
 
