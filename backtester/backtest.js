@@ -21,16 +21,19 @@ function parseArgs() {
   const args = process.argv.slice(2)
   const get  = flag => { const i = args.indexOf(flag); return i !== -1 ? args[i + 1] : null }
 
-  const pairsArg   = get('--pairs') || 'BTC,ETH'
-  const period     = parseInt(get('--period') || '30', 10)
-  const interval   = get('--interval') || '1h'
+  const pairsArg    = get('--pairs') || 'BTC,ETH'
+  const period      = parseInt(get('--period')     || '30', 10)
+  const interval    = get('--interval') || '1h'
   const tuneWeights = args.includes('--tune-weights')
+  const walkForward = args.includes('--walk-forward')
+  const trainDays   = parseInt(get('--train-days') || String(C.BACKTEST_TRAIN_DAYS), 10)
+  const testDays    = parseInt(get('--test-days')  || String(C.BACKTEST_TEST_DAYS),  10)
 
   const symbols = pairsArg === 'ALL'
     ? C.PAIRS
     : pairsArg.split(',').map(p => PAIR_ALIASES[p.toUpperCase()] || (p.toUpperCase() + 'USDT'))
 
-  return { symbols, period, interval, tuneWeights }
+  return { symbols, period, interval, tuneWeights, walkForward, trainDays, testDays }
 }
 
 function loadOhlcv(symbol, interval) {
@@ -54,24 +57,24 @@ function buildHistories(allBars, symbols, upToIdx) {
   return histories
 }
 
-function computeBarSignals(allBars, symbols, idx) {
+async function computeBarSignals(allBars, symbols, idx) {
   const prices   = {}
   for (const sym of symbols) {
     const bar = allBars[sym][idx]
     if (bar) prices[sym] = bar.close
   }
   const histories = buildHistories(allBars, symbols, idx)
-  return signals.computeSignals(prices, histories)
+  return signals.computeSignals(prices, histories, { backtest: true })
 }
 
-function runBacktest(allBars, symbols, startIdx, endIdx) {
+async function runBacktest(allBars, symbols, startIdx, endIdx) {
   // Use BTC as the primary "bar" driver (all pairs assumed aligned)
   const primaryBars = allBars[symbols[0]].slice(startIdx, endIdx)
-  const barSignals  = []
-
-  for (let i = startIdx; i < endIdx; i++) {
-    barSignals.push(computeBarSignals(allBars, symbols, i))
-  }
+  const barSignals  = await Promise.all(
+    Array.from({ length: endIdx - startIdx }, (_, i) =>
+      computeBarSignals(allBars, symbols, startIdx + i)
+    )
+  )
 
   const { trades, portfolioValues } = runSimulation(primaryBars, barSignals)
 
@@ -107,31 +110,26 @@ function periodsPerYearFor(bars) {
   return Math.round(msPerYear / msPerBar)
 }
 
-function tuneWeights(allBars, symbols, startIdx, splitIdx) {
+async function tuneWeights(allBars, symbols, startIdx, splitIdx) {
   console.log('Tuning signal weights (grid search)...')
   const candidates = [0.05, 0.10, 0.15, 0.20, 0.25, 0.30]
   let bestSharpe = -Infinity
   let bestWeights = { ...C.SIGNAL_WEIGHTS }
 
-  // Simplified grid: vary momentum_1h and rsi_norm, keep rest proportional
+  // Grid: vary momentum_1h and rsi_norm; scale remaining weights proportionally
+  const fixedKeys = ['funding_signal', 'cvd_norm', 'fear_greed_signal', 'volume_zscore', 'momentum_4h']
+  const fixedBase = fixedKeys.reduce((s, k) => s + (C.SIGNAL_WEIGHTS[k] || 0), 0)
+
   for (const m1 of candidates) {
     for (const rsi of candidates) {
-      // Distribute remaining weight proportionally
       const remaining = 1 - m1 - rsi
-      if (remaining <= 0) continue
-      const scale = remaining / (C.SIGNAL_WEIGHTS.momentum_4h + C.SIGNAL_WEIGHTS.volume_zscore +
-                                 C.SIGNAL_WEIGHTS.mean_rev + C.SIGNAL_WEIGHTS.btc_lead)
-      const w = {
-        momentum_1h:   m1,
-        rsi_norm:      rsi,
-        momentum_4h:   C.SIGNAL_WEIGHTS.momentum_4h   * scale,
-        volume_zscore: C.SIGNAL_WEIGHTS.volume_zscore  * scale,
-        mean_rev:      C.SIGNAL_WEIGHTS.mean_rev       * scale,
-        btc_lead:      C.SIGNAL_WEIGHTS.btc_lead       * scale
-      }
-      // Temporarily swap weights
+      if (remaining <= 0 || fixedBase === 0) continue
+      const scale = remaining / fixedBase
+      const w = { momentum_1h: m1, rsi_norm: rsi }
+      for (const k of fixedKeys) w[k] = (C.SIGNAL_WEIGHTS[k] || 0) * scale
+
       Object.assign(C.SIGNAL_WEIGHTS, w)
-      const result = runBacktest(allBars, symbols, startIdx, splitIdx)
+      const result = await runBacktest(allBars, symbols, startIdx, splitIdx)
       if (result.sharpe > bestSharpe) {
         bestSharpe  = result.sharpe
         bestWeights = { ...w }
@@ -142,8 +140,35 @@ function tuneWeights(allBars, symbols, startIdx, splitIdx) {
   console.log(`Best weights (Sharpe=${bestSharpe.toFixed(3)}):`, bestWeights)
 }
 
+/**
+ * runWalkForward — rolling walk-forward validation.
+ *
+ * Trains on `trainBars` bars, tests on the next `testBars`, steps forward by
+ * `testBars` (non-overlapping test windows). Reports per-window and aggregate
+ * out-of-sample metrics — the honest measure of whether edge survives.
+ */
+async function runWalkForward(allBars, symbols, trainBars, testBars) {
+  const minLen  = Math.min(...symbols.map(s => allBars[s].length))
+  const windows = []
+
+  for (let trainEnd = trainBars; trainEnd + testBars <= minLen; trainEnd += testBars) {
+    const testEnd = trainEnd + testBars
+    const result  = await runBacktest(allBars, symbols, trainEnd, testEnd)
+    windows.push({ window: windows.length + 1, trainEnd, testEnd, ...result })
+  }
+
+  if (!windows.length) return null
+
+  const avgSharpe    = windows.reduce((s, w) => s + w.sharpe,      0) / windows.length
+  const avgDrawdown  = windows.reduce((s, w) => s + w.maxDrawdown, 0) / windows.length
+  const avgReturn    = windows.reduce((s, w) => s + w.totalReturn, 0) / windows.length
+  const posWindows   = windows.filter(w => w.totalReturn > 0).length
+
+  return { windows, avgSharpe, avgDrawdown, avgReturn, posWindowsPct: posWindows / windows.length }
+}
+
 async function main() {
-  const { symbols, period, interval, tuneWeights: doTune } = parseArgs()
+  const { symbols, period, interval, tuneWeights: doTune, walkForward, trainDays, testDays } = parseArgs()
   console.log(`Backtesting ${symbols.join(', ')} — ${period}d @ ${interval}`)
 
   // 1. Load OHLCV
@@ -156,23 +181,34 @@ async function main() {
   const minLen   = Math.min(...symbols.map(s => allBars[s].length))
   const splitIdx = Math.floor(minLen * 0.75)
 
-  // 2. 75/25 split
   console.log(`Bars: ${minLen} total | in-sample: ${splitIdx} | holdout: ${minLen - splitIdx}`)
 
-  // 3. Optionally tune weights on in-sample
-  if (doTune) tuneWeights(allBars, symbols, 0, splitIdx)
+  // 2. Optionally tune weights on in-sample
+  if (doTune) await tuneWeights(allBars, symbols, 0, splitIdx)
 
-  // 4. In-sample run
-  const inSample = runBacktest(allBars, symbols, 0, splitIdx)
+  if (walkForward) {
+    // ── Walk-forward mode ──────────────────────────────────────────────────
+    // Convert days → bars based on interval (1h → 24 bars/day)
+    const barsPerDay = periodsPerYearFor(allBars[symbols[0]].slice(0, 2)) / 365
+    const trainBars  = Math.round(trainDays * barsPerDay)
+    const testBars   = Math.round(testDays  * barsPerDay)
+    console.log(`Walk-forward: train=${trainDays}d (${trainBars} bars)  test=${testDays}d (${testBars} bars)`)
 
-  // 5. Holdout run
-  const holdout  = runBacktest(allBars, symbols, splitIdx, minLen)
+    const wf = await runWalkForward(allBars, symbols, trainBars, testBars)
+    if (!wf) { console.error('Not enough data for walk-forward.'); process.exit(1) }
 
-  const results = { pairs: symbols, period, interval, inSample, holdout }
+    const results = { pairs: symbols, period, interval, mode: 'walk-forward', trainDays, testDays, walkForward: wf }
+    report.printWalkForward(results)
+    report.save(results)
+  } else {
+    // ── Standard 75/25 split ───────────────────────────────────────────────
+    const inSample = await runBacktest(allBars, symbols, 0, splitIdx)
+    const holdout  = await runBacktest(allBars, symbols, splitIdx, minLen)
 
-  // 6. Print + save
-  report.print(results)
-  report.save(results)
+    const results = { pairs: symbols, period, interval, mode: 'split', inSample, holdout }
+    report.print(results)
+    report.save(results)
+  }
 }
 
 main().catch(err => { console.error(err.message); process.exit(1) })

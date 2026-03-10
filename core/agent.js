@@ -4,9 +4,9 @@ const { C } = require('./world')
 
 // Volatility tiers — max position size as % of total portfolio
 const VOL_TIER = {
-  LOW:    { pairs: ['BTCUSDT', 'ETHUSDT', 'LTCUSDT'],                                         maxPct: 30, label: 'low-vol'  },
-  MEDIUM: { pairs: ['BNBUSDT', 'XRPUSDT', 'ADAUSDT', 'LINKUSDT', 'ATOMUSDT'],                maxPct: 20, label: 'med-vol'  },
-  HIGH:   { pairs: ['SOLUSDT', 'DOGEUSDT', 'AVAXUSDT', 'DOTUSDT', 'MATICUSDT', 'UNIUSDT', 'NEARUSDT'], maxPct: 10, label: 'high-vol' },
+  LOW:    { pairs: ['BTCUSDT', 'ETHUSDT', 'LTCUSDT'],                                         maxPct: C.VOL_TIER_LOW_MAX_PCT,  label: 'low-vol'  },
+  MEDIUM: { pairs: ['BNBUSDT', 'XRPUSDT', 'ADAUSDT', 'LINKUSDT', 'ATOMUSDT'],                maxPct: C.VOL_TIER_MED_MAX_PCT,  label: 'med-vol'  },
+  HIGH:   { pairs: ['SOLUSDT', 'DOGEUSDT', 'AVAXUSDT', 'DOTUSDT', 'MATICUSDT', 'UNIUSDT', 'NEARUSDT'], maxPct: C.VOL_TIER_HIGH_MAX_PCT, label: 'high-vol' },
 }
 const PAIR_TIER = {}
 for (const [, tier] of Object.entries(VOL_TIER)) {
@@ -53,7 +53,8 @@ function buildPrompt(ctx) {
     `  ${s.pair.padEnd(12)} (${(C.LABELS[s.pair] || s.pair)}) score=${s.signal_score.toFixed(2).padStart(6)}` +
     `  RSI=${s.rsi_14.toFixed(0).padStart(3)}` +
     `  mom=${s.momentum_1h.toFixed(2).padStart(6)}` +
-    `  vol_z=${s.volume_zscore.toFixed(1).padStart(5)}` +
+    `  fund=${(s.funding_signal ?? 0).toFixed(2).padStart(6)}` +
+    `  cvd=${(s.cvd_norm ?? 0).toFixed(2).padStart(6)}` +
     `  regime=${s.regime}`
   ).join('\n')
 
@@ -68,8 +69,8 @@ function buildPrompt(ctx) {
       const ticksHeld  = ctx.entryRounds[p] != null ? ctx.round - ctx.entryRounds[p] : '?'
       const tier       = PAIR_TIER[p]
       const pctStr     = pct != null ? `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%` : 'n/a'
-      const flag       = pct != null && pct >= 20 ? '  ← TAKE PROFIT?'
-                       : pct != null && pct <= -6 ? '  ← NEAR STOP-LOSS'
+      const flag       = pct != null && pct >= C.TAKE_PROFIT_FLAG_PCT   ? '  ← TAKE PROFIT?'
+                       : pct != null && pct <= -C.NEAR_STOP_WARN_PCT   ? '  ← NEAR STOP-LOSS'
                        : ''
       const overweight = tier && Number(portPct) > tier.maxPct ? `  ← OVERWEIGHT (max ${tier.maxPct}%)` : ''
       const valStr     = value != null ? `  now=$${value.toFixed(0)}` : ''
@@ -132,19 +133,27 @@ ${pairPerfLines}
 RIVALS:
 ${rivalLines}
 
+SIGNAL LEGEND:
+  score  = composite signal (-1 bearish → +1 bullish)
+  fund   = funding rate signal: negative = crowded longs (contrarian sell), positive = crowded shorts (contrarian buy)
+  cvd    = cumulative volume delta: positive = net buy flow, negative = net sell flow
+  mom    = 1h price momentum z-score
+  RSI    = 14-period RSI (>70 overbought, <30 oversold)
+  Also shown per-holding: Fear & Greed index is market-wide (${ctx.signals[0]?.fear_greed ?? 'n/a'}/100 — <25 extreme fear, >75 extreme greed)
+
 PORTFOLIO RULES:
   - You can hold UP TO 5 different pairs simultaneously — use this to diversify
   - A BUY does NOT require selling existing holdings — you can accumulate positions
   - Each BUY/SELL acts on ONE pair; plan across ticks to build a multi-position portfolio
   - Spreading across 2-4 uncorrelated pairs reduces risk and improves consistency score
-  - Holdings flagged ← TAKE PROFIT? are up ≥20% — consider selling if signals are weakening
-  - Holdings flagged ← NEAR STOP-LOSS are within 2% of the 8% auto-stop — decide before the engine forces you out
+  - Holdings flagged ← TAKE PROFIT? are up ≥${C.TAKE_PROFIT_FLAG_PCT}% — consider selling if signals are weakening
+  - Holdings flagged ← NEAR STOP-LOSS are within ${C.STOP_LOSS_PCT * 100 - C.NEAR_STOP_WARN_PCT}% of the ${C.STOP_LOSS_PCT * 100}% auto-stop — decide before the engine forces you out
   - Holdings flagged ← OVERWEIGHT exceed their volatility size limit — reduce or rotate
-  - Holdings showing held=N rounds: positions flat for 5+ rounds are deadweight — rotate capital
+  - Holdings showing held=N rounds: positions flat for ${C.DEADWEIGHT_ROUNDS}+ rounds are deadweight — rotate capital
 POSITION SIZING (by volatility — alloc% shown per holding):
-  - [low-vol]  BTC, ETH, LTC       → max 30% of portfolio per position
-  - [med-vol]  BNB, XRP, ADA, LINK, ATOM → max 20% of portfolio per position
-  - [high-vol] SOL, DOGE, AVAX, DOT, MATIC, UNI, NEAR → max 10% of portfolio per position
+  - [low-vol]  BTC, ETH, LTC       → max ${C.VOL_TIER_LOW_MAX_PCT}% of portfolio per position
+  - [med-vol]  BNB, XRP, ADA, LINK, ATOM → max ${C.VOL_TIER_MED_MAX_PCT}% of portfolio per position
+  - [high-vol] SOL, DOGE, AVAX, DOT, MATIC, UNI, NEAR → max ${C.VOL_TIER_HIGH_MAX_PCT}% of portfolio per position
   - Never allocate more than your volatility limit — the ← OVERWEIGHT flag will appear when breached
 
 SURVIVAL RULES (automatic, no human input):
@@ -156,42 +165,32 @@ SURVIVAL RULES (automatic, no human input):
   - ADAPTATION BONUS (+0.15): change your dominant strategy after losses
 ${ctx.threatened ? buildThreatDirective(ctx) : '🟢 THREAT STATUS: Safe.'}
 
-Respond ONLY in JSON, no markdown:
-{
-  "personality": "One vivid sentence — your current psychological state and strategy.",
-  "action":      "BUY" | "SELL" | "HOLD",
-  "pair":        "<valid pair string from signals above>",
-  "amount_usd":  <number — USD to spend or sell value, 0 for HOLD>,
-  "reasoning":   "2-3 sentences. Cite specific signal scores and rival positions."
-}`
+Respond in plain text only — one vivid sentence describing your current psychological state and market view as ${ctx.agentName}.`
 }
 
-async function decide(ctx, openai) {
+/**
+ * synthesize(ctx, openai) → string
+ *
+ * Periodic LLM call (every SYNTHESIS_EVERY_N_ROUNDS ticks) that returns a
+ * single personality sentence. Does NOT make trade decisions.
+ * Falls back to a static string on error or if openai is not provided.
+ */
+async function synthesize(ctx, openai) {
+  if (!openai) return ''
   const prompt = buildPrompt(ctx)
   try {
     const res = await openai.chat.completions.create({
       model:      'gpt-4o',
-      max_tokens: 500,
+      max_tokens: 80,
       messages: [
         { role: 'system', content: prompt },
-        { role: 'user',   content: 'Make your decision now.' }
+        { role: 'user',   content: 'Describe your current state in one sentence.' }
       ]
     })
-    const text  = res.choices[0].message.content
-    const match = text.match(/\{[\s\S]*\}/)
-    if (!match) throw new Error('No JSON in response')
-    const d = JSON.parse(match[0])
-    if (!C.PAIRS.includes(d.pair)) d.pair = 'BTCUSDT'
-    return d
-  } catch (err) {
-    return {
-      personality: 'Signal lost — holding position.',
-      action:      'HOLD',
-      pair:        'BTCUSDT',
-      amount_usd:  0,
-      reasoning:   `Error: ${err.message}`
-    }
+    return res.choices[0].message.content.trim()
+  } catch {
+    return ''
   }
 }
 
-module.exports = { decide }
+module.exports = { synthesize }

@@ -1,6 +1,6 @@
 'use strict'
 
-const { C } = require('../core/world')
+const { C, pairSpread } = require('../core/world')
 
 /**
  * simulateTick(bar, signalVector, agentState) → { action, pair, amount_usd }
@@ -17,10 +17,10 @@ function simulateTick(bar, signal, agentState) {
 
   let decision = { action: 'HOLD', pair, amount_usd: 0 }
 
-  if (signal_score > 0.4 && capital > 500 && positions < C.MAX_POSITIONS) {
-    const amount = capital * 0.20
+  if (signal_score > C.BACKTEST_BUY_SIGNAL && capital > C.BACKTEST_MIN_CAPITAL && positions < C.MAX_POSITIONS) {
+    const amount = capital * C.BACKTEST_BUY_SIZE_PCT
     decision = { action: 'BUY', pair, amount_usd: amount }
-  } else if (signal_score < -0.4 && (holdings[pair] || 0) > 0) {
+  } else if (signal_score < C.BACKTEST_SELL_SIGNAL && (holdings[pair] || 0) > 0) {
     const qty     = holdings[pair]
     decision = { action: 'SELL', pair, amount_usd: qty * price }
   }
@@ -28,19 +28,23 @@ function simulateTick(bar, signal, agentState) {
   // Apply same risk limits as world.applyDecision
   decision = enforceRisk(decision, agentState, price)
 
-  // Execute trade
+  // Execute trade — matches world.js applyDecision fee model
   if (decision.action === 'BUY' && decision.amount_usd > 0) {
-    const cost = decision.amount_usd * (1 + C.SLIPPAGE_PCT)
-    const qty  = decision.amount_usd / price
-    agentState.capital       -= cost
-    holdings[pair]            = (holdings[pair] || 0) + qty
-    agentState.entryPrices[pair] = price
+    const halfSpread             = pairSpread(pair)
+    const askPrice               = price * (1 + halfSpread)
+    const qty                    = decision.amount_usd / askPrice
+    const cost                   = decision.amount_usd * (1 + C.TAKER_FEE_PCT)
+    agentState.capital          -= cost
+    holdings[pair]               = (holdings[pair] || 0) + qty
+    agentState.entryPrices[pair] = askPrice
   } else if (decision.action === 'SELL') {
-    const qty     = holdings[pair] || 0
+    const qty = holdings[pair] || 0
     if (qty > 0) {
-      const proceeds            = qty * price * (1 - C.SLIPPAGE_PCT)
-      agentState.capital       += proceeds
-      holdings[pair]            = 0
+      const halfSpread   = pairSpread(pair)
+      const bidPrice     = price * (1 - halfSpread)
+      const proceeds     = qty * bidPrice * (1 - C.TAKER_FEE_PCT)
+      agentState.capital += proceeds
+      holdings[pair]     = 0
       delete agentState.entryPrices[pair]
     }
   }

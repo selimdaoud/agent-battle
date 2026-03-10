@@ -4,14 +4,52 @@ require('dotenv').config()
 const Database = require('better-sqlite3')
 
 // ── Constants ─────────────────────────────────────────────────────────────────
+// These are defined before C so they can be interpolated into ARCHETYPES strings
+const _ALPHA_MOMENTUM_THRESHOLD = 0.3   // signal_score above which ALPHA seeks momentum buys
+const _BETA_OVERSOLD_SIGNAL     = -0.3  // signal_score below which BETA looks for contrarian buys
+const _BETA_OVERSOLD_RSI        = 40    // RSI below which BETA considers an asset oversold
+
 const C = {
   INITIAL_CAPITAL:           parseInt(process.env.INITIAL_CAPITAL) || 10000,
   BANKRUPTCY_FLOOR:          3000,
   MAX_POSITIONS:             5,
   MAX_POSITION_PCT:          0.30,
   MAX_EXPOSURE_PCT:          0.80,
-  STOP_LOSS_PCT:             0.08,
+  STOP_LOSS_PCT:             0.08,   // auto-sell when position drops this fraction from entry
   SLIPPAGE_PCT:              0.001,
+
+  // ── Sell-decision thresholds (agent flags & prompts) ────────────────────────
+  TAKE_PROFIT_FLAG_PCT:      20,    // % gain at which ← TAKE PROFIT? flag appears on a holding
+  NEAR_STOP_WARN_PCT:        6,     // % loss at which ← NEAR STOP-LOSS warning flag appears
+  DEADWEIGHT_ROUNDS:         5,     // rounds held with no movement before labeled deadweight
+
+  // ── Position sizing by volatility tier ──────────────────────────────────────
+  VOL_TIER_LOW_MAX_PCT:      30,    // max allocation % per position for low-vol pairs (BTC, ETH, LTC)
+  VOL_TIER_MED_MAX_PCT:      20,    // max allocation % per position for med-vol pairs
+  VOL_TIER_HIGH_MAX_PCT:     10,    // max allocation % per position for high-vol pairs
+
+  // ── Archetype signal thresholds ──────────────────────────────────────────────
+  ALPHA_MOMENTUM_THRESHOLD:  _ALPHA_MOMENTUM_THRESHOLD,
+  BETA_OVERSOLD_SIGNAL:      _BETA_OVERSOLD_SIGNAL,
+  BETA_OVERSOLD_RSI:         _BETA_OVERSOLD_RSI,
+
+  // ── Realistic execution model ────────────────────────────────────────────────
+  TAKER_FEE_PCT:        0.001,   // 0.10% Binance standard taker fee (market orders)
+  MAKER_FEE_PCT:        0.001,   // 0.10% (reference only — we use market orders)
+  BID_ASK_SPREAD: {              // full spread (halved for each side of trade)
+    LOW:    0.0003,              // ~0.03% BTC, ETH, LTC
+    MEDIUM: 0.0008,              // ~0.08% BNB, XRP, ADA, LINK, ATOM
+    HIGH:   0.0015,              // ~0.15% SOL, DOGE, AVAX, DOT, MATIC, UNI, NEAR
+  },
+  MAX_TRADE_VOLUME_PCT: 0.005,   // max 0.5% of 20h USD volume per single trade
+
+  // ── Backtester simulation parameters ────────────────────────────────────────
+  BACKTEST_BUY_SIGNAL:       0.4,   // signal_score above which backtester enters a long
+  BACKTEST_SELL_SIGNAL:      -0.4,  // signal_score below which backtester exits a long
+  BACKTEST_BUY_SIZE_PCT:     0.20,  // fraction of capital deployed per BUY in backtester
+  BACKTEST_MIN_CAPITAL:      500,   // minimum capital required to allow a BUY in backtester
+  BACKTEST_TRAIN_DAYS:       30,    // default training window for walk-forward (days)
+  BACKTEST_TEST_DAYS:        7,     // default test window for walk-forward (days)
 
   CULL_EVERY_N_ROUNDS:       10,
   LAST_PLACE_CULL_THRESHOLD: 3,
@@ -36,13 +74,13 @@ const C = {
     ALPHA: {
       label: 'Momentum Rider',
       constraint: `You MUST hold at least 1 position at all times.
-Bias toward assets with signal_score > 0.3.
+Bias toward assets with signal_score > ${_ALPHA_MOMENTUM_THRESHOLD}.
 Holding more than 60% cash for 2+ consecutive rounds hurts your survival score.`,
       survivalBonus: 'momentum'
     },
     BETA: {
       label: 'Contrarian',
-      constraint: `You look for oversold assets (signal_score < -0.3, RSI < 40).
+      constraint: `You look for oversold assets (signal_score < ${_BETA_OVERSOLD_SIGNAL}, RSI < ${_BETA_OVERSOLD_RSI}).
 When ALPHA and GAMMA both hold an asset, treat that as a reason to avoid it.
 Your survival score gets a bonus when your holdings differ from both rivals.`,
       survivalBonus: 'divergence'
@@ -57,12 +95,13 @@ Your survival score rewards low drawdown more than raw returns.`,
   },
 
   SIGNAL_WEIGHTS: {
-    momentum_1h:   0.25,
-    momentum_4h:   0.20,
-    rsi_norm:      0.20,
-    volume_zscore: 0.15,
-    mean_rev:      0.10,
-    btc_lead:      0.10
+    funding_signal:    0.25,  // contrarian: crowded longs/shorts on perpetuals
+    cvd_norm:          0.20,  // taker buy/sell flow imbalance from kline data
+    momentum_1h:       0.15,  // recent price momentum
+    rsi_norm:          0.15,  // overbought / oversold
+    fear_greed_signal: 0.10,  // market-wide contrarian sentiment
+    volume_zscore:     0.10,  // unusual volume (now real, from klines)
+    momentum_4h:       0.05,  // medium-term momentum
   },
 
   REGIME_MULTIPLIERS: {
@@ -70,10 +109,52 @@ Your survival score rewards low drawdown more than raw returns.`,
     trending_down: 1.0,
     ranging:       0.6,
     volatile:      0.3
+  },
+
+  // ── Strategy engine thresholds (core/strategy.js) ───────────────────────────
+  STRATEGY: {
+    SYNTHESIS_EVERY_N_ROUNDS: 20,  // how often the LLM generates personality & market view
+
+    ALPHA: {
+      buy_signal:    _ALPHA_MOMENTUM_THRESHOLD, // min signal_score to enter (0.30)
+      sell_signal:   -0.15,  // signal_score at which ALPHA exits
+      cvd_buy_min:    0.10,  // min cvd_norm to confirm buy flow
+      cvd_sell_max:  -0.30,  // cvd below which ALPHA exits regardless of price signal
+      funding_buy_max: 0.50, // max funding_signal allowed (avoid buying already-crowded longs)
+      buy_size_pct:   0.25,  // fraction of capital per BUY
+    },
+
+    BETA: {
+      funding_buy_min:  0.40,  // min funding_signal (crowded shorts) to trigger contrarian entry
+      fear_buy_max:     25,    // max Fear & Greed index for fear-based entry
+      greed_sell_min:   75,    // min Fear & Greed index to trigger greed-based exit
+      sell_signal:      0.50,  // exit when signal_score rises above this (no longer oversold)
+      buy_size_pct:     0.20,  // fraction of capital per BUY
+    },
+
+    GAMMA: {
+      buy_signal:      0.50,  // min signal_score — high quality bar
+      cvd_buy_min:     0.20,  // min cvd to confirm buy flow
+      funding_buy_max: 0.60,  // max funding_signal (do not buy already-crowded longs)
+      sell_loss_pct:   5,     // exit if unrealized loss exceeds this % (tighter than auto-stop)
+      sell_profit_pct: 10,    // take profit at this % gain if flow turns
+      cash_min_pct:    0.40,  // must keep at least 40% in cash at all times
+      max_positions:   2,     // hard cap on simultaneous open positions
+      buy_size_pct:    0.15,  // fraction of capital per BUY (conservative)
+    },
   }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Half-spread for a pair based on its volatility tier. */
+function _pairSpread(pair) {
+  const s = C.BID_ASK_SPREAD
+  if (['BTCUSDT','ETHUSDT','LTCUSDT'].includes(pair))                                         return s.LOW    / 2
+  if (['BNBUSDT','XRPUSDT','ADAUSDT','LINKUSDT','ATOMUSDT'].includes(pair))                   return s.MEDIUM / 2
+  return s.HIGH / 2
+}
+
 function _totalValue(agent, prices) {
   let total = agent.capital
   for (const [pair, qty] of Object.entries(agent.holdings)) {
@@ -339,17 +420,25 @@ class World {
       const priceThen = d.price_at_decision
       const movePct   = priceThen ? (priceNow - priceThen) / priceThen * 100 : 0
       const win       = d.action === 'BUY' ? movePct > 0 : movePct < 0
-      if (!pairMap[d.pair]) pairMap[d.pair] = { wins: 0, total: 0 }
+      if (!pairMap[d.pair]) pairMap[d.pair] = { wins: 0, total: 0, winPnl: 0, lossPnl: 0 }
       pairMap[d.pair].wins  += win ? 1 : 0
       pairMap[d.pair].total += 1
+      if (win) pairMap[d.pair].winPnl  += Math.abs(movePct)
+      else     pairMap[d.pair].lossPnl += Math.abs(movePct)
     }
     const pairPerformance = Object.entries(pairMap)
       .filter(([, s]) => s.total >= 2)
-      .map(([pair, s]) => ({
-        pair:    C.LABELS[pair] || pair,
-        winRate: Math.round(s.wins / s.total * 100),
-        trades:  s.total
-      }))
+      .map(([pair, s]) => {
+        const losses = s.total - s.wins
+        return {
+          rawPair: pair,
+          pair:    C.LABELS[pair] || pair,
+          winRate: Math.round(s.wins / s.total * 100),
+          trades:  s.total,
+          avgWin:  s.wins   > 0 ? s.winPnl  / s.wins   : 0,
+          avgLoss: losses   > 0 ? s.lossPnl / losses   : 0,
+        }
+      })
       .sort((a, b) => a.winRate - b.winRate)
 
     // ── Rivals: last 3 actions each ───────────────────────────────────────────
@@ -447,12 +536,15 @@ class World {
     let trade = null
 
     if (decision.action === 'BUY' && decision.amount_usd > 0 && price) {
-      const cost = decision.amount_usd * (1 + C.SLIPPAGE_PCT)
-      const qty  = decision.amount_usd / price
+      // Fill at ask: mid + half-spread; fee on trade value
+      const halfSpread = _pairSpread(decision.pair)
+      const askPrice   = price * (1 + halfSpread)
+      const qty        = decision.amount_usd / askPrice
+      const cost       = decision.amount_usd * (1 + C.TAKER_FEE_PCT)
 
       agent.capital -= cost
       agent.holdings[decision.pair] = (agent.holdings[decision.pair] || 0) + qty
-      agent.entryPrices[decision.pair] = price
+      agent.entryPrices[decision.pair] = askPrice   // entry tracked at ask
       agent.entryRounds[decision.pair] = this._snapshot.round
 
       trade = {
@@ -469,7 +561,11 @@ class World {
         : (agent.holdings[decision.pair] || 0)
 
       if (qty > 0) {
-        const proceeds = qty * price * (1 - C.SLIPPAGE_PCT)
+        // Fill at bid: mid − half-spread; fee deducted from proceeds
+        const halfSpread = _pairSpread(decision.pair)
+        const bidPrice   = price * (1 - halfSpread)
+        const proceeds   = qty * bidPrice * (1 - C.TAKER_FEE_PCT)
+
         agent.capital += proceeds
         agent.holdings[decision.pair] = (agent.holdings[decision.pair] || 0) - qty
         if (agent.holdings[decision.pair] <= 0) {
@@ -588,18 +684,25 @@ class World {
       decision.amount_usd = Math.min(decision.amount_usd, agent.capital * 0.95)
       decision.amount_usd = Math.min(decision.amount_usd, total * C.MAX_POSITION_PCT)
 
+      // Volume-based limit: cap trade at MAX_TRADE_VOLUME_PCT of 20h USD volume
+      const sig = this._snapshot.lastSignals.find(s => s.pair === decision.pair)
+      if (sig?.vol_usd_20h > 0) {
+        decision.amount_usd = Math.min(decision.amount_usd, sig.vol_usd_20h * C.MAX_TRADE_VOLUME_PCT)
+      }
+
       const invested = total - agent.capital
-      if (invested / total >= C.MAX_EXPOSURE_PCT) {
+      if (total > 0 && invested / total >= C.MAX_EXPOSURE_PCT) {
         return { ...decision, action: 'HOLD', amount_usd: 0, enforced_reason: 'max_exposure' }
       }
     }
 
     if (agentName === 'GAMMA') {
+      const cfg      = C.STRATEGY.GAMMA
       const positions = Object.values(agent.holdings).filter(q => q > 0).length
-      if (decision.action === 'BUY' && positions >= 2) {
-        return { ...decision, action: 'HOLD', amount_usd: 0, enforced_reason: 'gamma_2pos_limit' }
+      if (decision.action === 'BUY' && positions >= cfg.max_positions) {
+        return { ...decision, action: 'HOLD', amount_usd: 0, enforced_reason: 'gamma_pos_limit' }
       }
-      if (decision.action === 'BUY' && agent.capital / total < 0.40) {
+      if (decision.action === 'BUY' && total > 0 && agent.capital / total < cfg.cash_min_pct) {
         return { ...decision, action: 'HOLD', amount_usd: 0, enforced_reason: 'gamma_cash_floor' }
       }
     }
@@ -801,3 +904,4 @@ function _maxDrawdown(portfolioValues) {
 
 module.exports = World
 module.exports.C = C
+module.exports.pairSpread = _pairSpread

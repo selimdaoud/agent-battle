@@ -1,6 +1,6 @@
 # Agent Battle GPT
 
-A multi-agent AI trading simulation where three autonomous GPT-4o agents — **ALPHA**, **BETA**, and **GAMMA** — compete for survival on live crypto markets. Each agent has a fixed archetype, decision memory, and a survival score. The engine automatically threatens and eliminates underperformers. A human Master supervises via a terminal TUI dashboard.
+A multi-agent trading simulation where three autonomous agents — **ALPHA**, **BETA**, and **GAMMA** — compete for survival on live crypto markets. Each agent runs a **deterministic rules-based strategy** driven by real market flow data (funding rates, CVD, Fear & Greed, volume). GPT-4o is used only for periodic personality synthesis, not for trading decisions. The engine automatically threatens and eliminates underperformers. A human Master supervises via a terminal TUI dashboard.
 
 ```
 ┌─────────────────────────────┬──────────────────────────────┐
@@ -33,8 +33,8 @@ A multi-agent AI trading simulation where three autonomous GPT-4o agents — **A
 
 - **Node.js 20 LTS** or newer (tested on Node 25)
 - **npm** 9+
-- An **OpenAI API key** with GPT-4o access
-- Internet access to Binance public API (no key required)
+- An **OpenAI API key** with GPT-4o access (used only for periodic personality synthesis — not required for core trading logic)
+- Internet access to Binance public API and `api.alternative.me` (both free, no key required)
 
 ---
 
@@ -70,13 +70,103 @@ INITIAL_CAPITAL=10000           # Starting USD per agent (delete sim.db after ch
 
 Key constants (edit in `core/world.js` → `const C`):
 
+**Risk & execution**
+
 | Constant | Default | Description |
 |---|---|---|
-| `BANKRUPTCY_FLOOR` | 3000 | Auto-respawn threshold |
-| `CULL_EVERY_N_ROUNDS` | 10 | Survival check cadence |
-| `LAST_PLACE_CULL_THRESHOLD` | 3 | Consecutive last-place rounds before elimination |
-| `STOP_LOSS_PCT` | 0.08 | Auto-sell if position drops 8% from entry |
-| `TICK_INTERVAL_MS` | 60000 | Also settable via `.env` |
+| `STOP_LOSS_PCT` | `0.08` | Engine auto-sells a position when it drops this fraction (8%) below entry |
+| `SLIPPAGE_PCT` | `0.001` | Simulated slippage applied to every BUY and SELL (0.1%) |
+| `MAX_POSITIONS` | `5` | Maximum number of different pairs an agent can hold simultaneously |
+| `MAX_POSITION_PCT` | `0.30` | Maximum fraction of portfolio in a single position (30%) |
+| `MAX_EXPOSURE_PCT` | `0.80` | Maximum fraction of portfolio deployed as holdings (80%) |
+| `BANKRUPTCY_FLOOR` | `3000` | Portfolio value below which agent is auto-respawned |
+
+**Sell-decision flags shown to the agent in the prompt**
+
+| Constant | Default | Description |
+|---|---|---|
+| `TAKE_PROFIT_FLAG_PCT` | `20` | % unrealised gain at which the `← TAKE PROFIT?` flag appears on a holding |
+| `NEAR_STOP_WARN_PCT` | `6` | % unrealised loss at which the `← NEAR STOP-LOSS` warning flag appears (2% before the 8% auto-stop) |
+| `DEADWEIGHT_ROUNDS` | `5` | Rounds a position can be held with no movement before it is flagged as deadweight in the prompt |
+
+**Position sizing by volatility tier**
+
+| Constant | Default | Applies to |
+|---|---|---|
+| `VOL_TIER_LOW_MAX_PCT` | `30` | Max allocation % per position for low-vol pairs (BTC, ETH, LTC) |
+| `VOL_TIER_MED_MAX_PCT` | `20` | Max allocation % per position for med-vol pairs (BNB, XRP, ADA, LINK, ATOM) |
+| `VOL_TIER_HIGH_MAX_PCT` | `10` | Max allocation % per position for high-vol pairs (SOL, DOGE, AVAX, DOT, MATIC, UNI, NEAR) |
+
+**Archetype signal thresholds**
+
+| Constant | Default | Description |
+|---|---|---|
+| `ALPHA_MOMENTUM_THRESHOLD` | `0.3` | signal_score above which ALPHA (Momentum Rider) biases toward buying |
+| `BETA_OVERSOLD_SIGNAL` | `-0.3` | signal_score below which BETA (Contrarian) looks for oversold entries |
+| `BETA_OVERSOLD_RSI` | `40` | RSI below which BETA considers an asset oversold |
+
+**Survival & culling**
+
+| Constant | Default | Description |
+|---|---|---|
+| `CULL_EVERY_N_ROUNDS` | `10` | How often the survival check runs |
+| `LAST_PLACE_CULL_THRESHOLD` | `3` | Consecutive last-place finishes before elimination |
+| `UNDERPERFORM_GAP_PCT` | `0.25` | Portfolio gap vs leader (25%) that triggers threatened status |
+| `UNDERPERFORM_MIN_ROUND` | `20` | Earliest round at which underperformance culling can trigger |
+
+**Realistic execution costs**
+
+| Constant | Default | Description |
+|---|---|---|
+| `TAKER_FEE_PCT` | `0.001` | Binance standard taker fee (0.10%) applied to every BUY and SELL |
+| `BID_ASK_SPREAD.LOW` | `0.0003` | Full bid-ask spread for low-vol pairs: BTC, ETH, LTC (~0.03%) |
+| `BID_ASK_SPREAD.MEDIUM` | `0.0008` | Full spread for mid-vol pairs: BNB, XRP, ADA, LINK, ATOM (~0.08%) |
+| `BID_ASK_SPREAD.HIGH` | `0.0015` | Full spread for high-vol pairs: SOL, DOGE, AVAX, DOT, MATIC, UNI, NEAR (~0.15%) |
+| `MAX_TRADE_VOLUME_PCT` | `0.005` | Maximum single-trade size as a fraction of the pair's 20h USD volume (0.5%) |
+
+**Signal weights** (sum to 1.0 — edit `C.SIGNAL_WEIGHTS` in `core/world.js`)
+
+| Signal | Weight | Source |
+|---|---|---|
+| `funding_signal` | 25% | Binance perpetuals funding rate — contrarian: crowded longs → bearish |
+| `cvd_norm` | 20% | Cumulative Volume Delta from Binance klines taker buy/sell data |
+| `momentum_1h` | 15% | Z-score of last 1h return vs 20-bar rolling stddev |
+| `rsi_norm` | 15% | Normalised Wilder RSI-14: `(RSI − 50) / 50` |
+| `fear_greed_signal` | 10% | Crypto Fear & Greed Index (alternative.me) — contrarian |
+| `volume_zscore` | 10% | Last-bar volume vs rolling mean, clamped to ±3 |
+| `momentum_4h` | 5% | Medium-term momentum (every 4th bar of the 1h history) |
+
+**Strategy engine thresholds** (edit `C.STRATEGY` in `core/world.js`)
+
+| Constant | Default | Description |
+|---|---|---|
+| `STRATEGY.SYNTHESIS_EVERY_N_ROUNDS` | `20` | How often GPT-4o runs to generate personality text |
+| `STRATEGY.ALPHA.buy_signal` | `0.30` | Minimum signal_score for ALPHA to enter a new position |
+| `STRATEGY.ALPHA.sell_signal` | `-0.15` | signal_score threshold at which ALPHA exits a position |
+| `STRATEGY.ALPHA.cvd_buy_min` | `0.10` | Minimum CVD required to confirm buy flow for ALPHA |
+| `STRATEGY.ALPHA.cvd_sell_max` | `-0.30` | CVD below this triggers an ALPHA exit regardless of price |
+| `STRATEGY.ALPHA.funding_buy_max` | `0.50` | Max funding_signal — ALPHA won't buy already-crowded longs |
+| `STRATEGY.BETA.funding_buy_min` | `0.40` | Min funding_signal (crowded shorts) for BETA contrarian entry |
+| `STRATEGY.BETA.fear_buy_max` | `25` | F&G below this triggers BETA fear-based entry |
+| `STRATEGY.BETA.greed_sell_min` | `75` | F&G above this triggers BETA greed-based exit |
+| `STRATEGY.BETA.sell_signal` | `0.50` | BETA exits when signal normalises above this (thesis complete) |
+| `STRATEGY.GAMMA.buy_signal` | `0.50` | High-quality bar — GAMMA only enters on strong conviction |
+| `STRATEGY.GAMMA.cvd_buy_min` | `0.20` | GAMMA requires strong confirmed buy flow |
+| `STRATEGY.GAMMA.sell_loss_pct` | `5` | GAMMA exits at 5% loss (tighter than the global 8% auto-stop) |
+| `STRATEGY.GAMMA.sell_profit_pct` | `10` | GAMMA takes profit at 10% gain when flow is turning |
+| `STRATEGY.GAMMA.cash_min_pct` | `0.40` | GAMMA must hold at least 40% cash (engine-enforced) |
+| `STRATEGY.GAMMA.max_positions` | `2` | GAMMA hard cap on simultaneous open positions |
+
+**Backtester**
+
+| Constant | Default | Description |
+|---|---|---|
+| `BACKTEST_BUY_SIGNAL` | `0.4` | signal_score above which the backtester enters a long |
+| `BACKTEST_SELL_SIGNAL` | `-0.4` | signal_score below which the backtester exits a long |
+| `BACKTEST_BUY_SIZE_PCT` | `0.20` | Fraction of capital deployed per BUY in the backtester (20%) |
+| `BACKTEST_MIN_CAPITAL` | `500` | Minimum capital required to allow a BUY in the backtester |
+| `BACKTEST_TRAIN_DAYS` | `30` | Default training window for walk-forward validation (days) |
+| `BACKTEST_TEST_DAYS` | `7` | Default out-of-sample test window per walk-forward fold (days) |
 
 ---
 
@@ -135,49 +225,67 @@ Or press **F** in the dashboard to force a single tick.
 
 #### ALPHA — Momentum Rider
 
-ALPHA is an aggressive trend-follower. Its mandate is to always be invested.
+ALPHA is an aggressive trend-follower driven by a deterministic momentum engine.
 
-**Behaviour:**
-- Must hold at least one position at all times
-- Actively seeks assets with a composite `signal_score > 0.3` (bullish momentum)
-- Holding more than 60% cash for two or more consecutive rounds penalises its survival score
-- Tends to accumulate during uptrends and ride them until signals reverse
+**Entry rules:**
+- Requires `signal_score > 0.30` AND `cvd_norm > 0.10` — both price momentum and confirmed buy flow
+- Won't enter if `funding_signal > 0.50` (already-crowded long, contrarian risk)
+- Position size is Kelly-adjusted based on per-pair historical win rate and avg win/loss ratio
 
-**Survival bonus:** ALPHA scores +0.05 if it holds positions aligned with the momentum direction. It is rewarded for conviction, not caution.
+**Exit rules:**
+- Exits when `signal_score < −0.15` (momentum reversal)
+- Exits when `cvd_norm < −0.30` (selling pressure regardless of price)
+- Exits deadweight positions held for 5+ rounds with less than 3% unrealised move
 
-**Risk profile:** Highest — ALPHA is fully exposed in downturns and is often the first to take a large drawdown. It compensates with outsized gains during trending markets.
+**Threat mode:** Both entry and exit thresholds loosen by 0.08 when threatened — ALPHA takes more risk to recover rank.
+
+**Survival bonus:** +0.05 if ALPHA holds at least one position aligned with positive momentum.
+
+**Risk profile:** Highest — ALPHA is fully exposed in downturns and often takes the largest drawdowns. It compensates with outsized gains during trending markets.
 
 ---
 
 #### BETA — Contrarian
 
-BETA is a counter-trend hunter. It profits by going where others won't.
+BETA is a counter-trend hunter. It profits from crowded positioning extremes.
 
-**Behaviour:**
-- Targets oversold assets: `signal_score < -0.3` and `RSI < 40`
-- When ALPHA and GAMMA both hold a given pair, BETA treats that as a contrarian signal to *avoid* it
-- Explicitly instructed to differentiate its holdings from both rivals
-- Tends to buy into weakness and sell into strength
+**Entry rules:**
+- Enters when `funding_signal > 0.40` (crowded shorts = contrarian bullish) OR `Fear & Greed < 25` (extreme fear = buy zone)
+- Will not enter if signal_score is below −0.80 (absolute freefall — not just oversold)
+- Will not enter pairs that both rivals currently hold (divergence would be lost)
 
-**Survival bonus:** BETA scores +0.05 when its holdings differ from both ALPHA and GAMMA simultaneously — rewarding genuine divergence, not accidental difference.
+**Exit rules:**
+- Exits when both rivals hold the pair AND `signal_score > 0` (contrarian thesis exhausted)
+- Exits when `Fear & Greed > 75` (extreme greed — contrarian sell zone)
+- Exits when `signal_score > 0.50` (asset has normalised — no longer an oversold play)
 
-**Risk profile:** Medium — BETA can catch reversals early and profit when the market turns, but it regularly buys falling assets and requires patience. It thrives in ranging or reverting markets and struggles in sustained trends.
+**Threat mode:** Entry threshold on `funding_signal` lowers by 0.15 when threatened.
+
+**Survival bonus:** +0.05 when BETA's holdings differ from both ALPHA and GAMMA simultaneously.
+
+**Risk profile:** Medium — BETA buys into weakness and sells into strength. It thrives in ranging or reverting markets and struggles in sustained trends.
 
 ---
 
 #### GAMMA — Risk Manager
 
-GAMMA is a disciplined capital preserver. Stability over returns.
+GAMMA is a disciplined capital preserver with the strictest entry criteria of the three agents.
 
-**Behaviour:**
-- Hard limit of **2 open positions** at any time (engine-enforced)
-- Must keep **at least 40% cash** at all times (engine-enforced — BUY orders are blocked if this would be violated)
-- Prioritises low-drawdown assets; avoids volatile or speculative pairs
-- Tends to hold for longer and trade less frequently than ALPHA or BETA
+**Entry rules:**
+- Requires `signal_score > 0.50`, `cvd_norm > 0.20`, `funding_signal < 0.60`, AND `Fear & Greed < 65` — all four filters must pass simultaneously
+- Hard cap of **2 open positions** at any time (engine-enforced)
+- Must keep **at least 40% cash** at all times; BUY orders are blocked if they would breach this floor — even after the trade passes all other filters
 
-**Survival bonus:** GAMMA scores +0.05 when its maximum drawdown is below the threshold — rewarding capital preservation over raw P&L.
+**Exit rules:**
+- **Stop-loss at −5%** (tighter than the global 8% auto-stop) — exits immediately on crossing this threshold
+- Exits any position where `signal_score < 0` (signal turned bearish — exits before drawdown deepens)
+- **Take-profit at +10%** if `cvd_norm < 0` (flow is turning against the position)
 
-**Risk profile:** Lowest — GAMMA rarely leads the portfolio value rankings but rarely crashes either. It acts as a floor in bear markets and is the hardest to eliminate through bankruptcy.
+**Threat mode:** All thresholds loosen by 0.10 when threatened; cash floor is also temporarily overridden.
+
+**Survival bonus:** +0.05 when GAMMA's maximum drawdown stays below the threshold — rewarding capital preservation over raw P&L.
+
+**Risk profile:** Lowest — GAMMA rarely leads in portfolio value but rarely crashes. It is the hardest to eliminate through bankruptcy.
 
 ---
 
@@ -191,45 +299,66 @@ This section describes the complete decision cycle — everything that happens f
 
 ### 1. Signal Computation (`core/signals.js`)
 
-At the start of every tick the engine fetches live Binance prices for all 15 pairs and passes them through the signal pipeline. For each pair, five sub-signals are computed and combined into a single `signal_score` in the range **−1 to +1**:
+At the start of every tick the engine fetches live data from three external sources in parallel, then computes seven sub-signals per pair combined into a single `signal_score` in **−1 to +1**:
+
+**Live data fetched every tick:**
+
+| Source | Endpoint | What it provides |
+|---|---|---|
+| Binance spot klines | `api.binance.com/api/v3/klines` | Volume, taker buy volume, price bars — all 15 pairs in parallel |
+| Binance perpetuals | `fapi.binance.com/fapi/v1/premiumIndex` | Funding rates for all perpetual contracts |
+| Alternative.me | `api.alternative.me/fng/?limit=1` | Crypto Fear & Greed Index (0–100) |
+
+All fetches have a 4-second timeout and neutral fallbacks — a failed fetch never blocks the tick.
+
+**Signal weights:**
 
 | Sub-signal | Weight | What it measures |
 |---|---|---|
-| `momentum_1h` | 35% | Short-term price momentum over the last hour |
-| `rsi_norm` | 25% | Normalised 14-period RSI (overbought/oversold) |
-| `mean_reversion` | 20% | Distance from 20-period moving average |
-| `volume_zscore` | 10% | Volume relative to its 20-period average |
-| `btc_leadership` | 10% | Whether BTC is leading the broader market up or down |
+| `funding_signal` | 25% | Contrarian funding rate: high positive → crowded longs → bearish; high negative → crowded shorts → bullish |
+| `cvd_norm` | 20% | Cumulative Volume Delta: `sum(takerBuyVol − takerSellVol) / totalVol` ∈ [−1, +1]. Positive = net buy pressure |
+| `momentum_1h` | 15% | Z-score of last 1h return vs 20-bar rolling stddev of returns |
+| `rsi_norm` | 15% | Normalised Wilder RSI-14: `(RSI − 50) / 50` |
+| `fear_greed_signal` | 10% | Contrarian: extreme fear (+1) = buy zone; extreme greed (−1) = sell zone |
+| `volume_zscore` | 10% | Last-bar volume vs rolling mean, clamped to ±3 (real Binance kline data) |
+| `momentum_4h` | 5% | Medium-term momentum computed over every 4th bar of the 1h history |
 
-The resulting `SignalVector` per pair also includes a **regime** classification (`trending_up`, `trending_down`, `ranging`, `volatile`). In ranging or volatile regimes the composite score is dampened — rewarding agents that trade less aggressively in uncertain conditions.
+The composite score is multiplied by a **regime damper** before clamping to [−1, +1]: `trending_up/down × 1.0`, `ranging × 0.6`, `volatile × 0.3`. This reduces false signals in choppy or high-volatility regimes.
+
+The `SignalVector` also carries `vol_usd_20h` (20h USD volume, used by the risk limit to cap trade size at 0.5% of market volume) and `rsi_divergence` (bearish divergence flag when price makes a new high but RSI does not).
 
 ---
 
 ### 2. Context Assembly (`core/world.js → getPromptContext`)
 
-For each agent the world assembles a rich context object. This is the information the agent will reason over:
+For each agent the world assembles a context object used by both the strategy engine and the periodic LLM synthesis:
 
 | Context field | Contents |
 |---|---|
-| `signals` | All 15 `SignalVector` objects — scores, RSI, momentum, volume z-score, regime |
+| `signals` | All 15 `SignalVector` objects — score, funding_signal, cvd_norm, RSI, momentum, volume z-score, vol_usd_20h, regime |
 | `capital` | Current uninvested cash |
 | `holdings` | All open positions (pair → quantity) |
-| `totalValue` | Cash + mark-to-market value of all positions at live prices |
+| `entryPrices` | Average entry price per held pair (used for unrealised PnL calculation) |
+| `entryRounds` | Round in which each position was opened (used for deadweight detection) |
+| `currentPrices` | Live mark-to-market price per pair |
+| `totalValue` | Cash + mark-to-market value of all positions |
 | `survivalScore` | Computed this tick from P&L, consistency, adaptation, and drawdown |
 | `threatened` | Boolean — whether this agent is currently under threat of elimination |
-| `memory` | Last **10** decisions, each with action, pair, amount, outcome (WIN/LOSS), signal score at the time, and the agent's own reasoning |
+| `memory` | Last 10 decisions — action, pair, amount, outcome (WIN/LOSS), signal score, and reasoning |
 | `losingStreak` | Count of consecutive losing decisions |
-| `pairPerformance` | Per-pair win rate over the last 20 trades for this agent |
-| `rivals` | For each of the other two agents: name, archetype, total value, P&L%, survival score, current holdings, and **last 3 actions** |
-| `archetype` | The agent's fixed role (Momentum Rider / Contrarian / Risk Manager) |
-| `archetypeConstraint` | Engine-enforced rules the agent cannot override (e.g. GAMMA's 40% cash floor) |
-| `config` | Simulation parameters: cull cadence, bankruptcy floor, underperform gap threshold |
+| `pairPerformance` | Per-pair stats over the last 20 trades: `winRate`, `trades`, `avgWin`, `avgLoss`, `rawPair` — used directly by Kelly sizing |
+| `rivals` | For each rival: name, archetype, total value, P&L%, survival score, current holdings (label string), last 3 actions |
+| `archetype` | The agent's fixed role |
+| `archetypeConstraint` | Engine-enforced rules the agent cannot override |
+| `personality` | The agent's current personality sentence (updated every N rounds by GPT-4o) |
+| `agentName` | `'ALPHA'`, `'BETA'`, or `'GAMMA'` — used by `strategy.decide()` to dispatch the right rules |
+| `round` | Current round number |
 
 ---
 
 ### 3. Prompt Construction (`core/agent.js → buildPrompt`)
 
-The context is rendered into a structured natural language prompt that becomes the **system message** sent to GPT-4o. It is divided into clearly labelled sections:
+The context is rendered into a prompt used **only** for the periodic LLM personality synthesis (every 20 rounds). The signal columns now show flow data instead of raw volume:
 
 ```
 You are ALPHA, an autonomous AI trading agent. Round 42.
@@ -238,9 +367,15 @@ ARCHETYPE: Momentum Rider
 CONSTRAINT: Must hold at least one position at all times...
 
 MARKET SIGNALS:
-  BTCUSDT  (BTC/USDT)   score= +0.62  RSI= 68  mom= +1.84  vol_z= +2.1  regime=trending_up
-  ETHUSDT  (ETH/USDT)   score= +0.41  RSI= 61  mom= +1.12  vol_z= +1.3  regime=trending_up
+  BTCUSDT  (BTC/USDT)   score= +0.62  RSI= 68  mom= +1.84  fund= -0.12  cvd= +0.41  regime=trending_up
+  ETHUSDT  (ETH/USDT)   score= +0.41  RSI= 61  mom= +1.12  fund= +0.05  cvd= +0.22  regime=trending_up
   ...
+
+SIGNAL LEGEND:
+  score = composite signal (−1 bearish → +1 bullish)
+  mom   = 1h price momentum z-score
+  fund  = funding rate signal: >0 crowded shorts (contrarian bullish), <0 crowded longs (contrarian bearish)
+  cvd   = cumulative volume delta: >0 net buy pressure, <0 net sell pressure
 
 YOUR PORTFOLIO:
   Cash:    $4,200.00
@@ -248,82 +383,89 @@ YOUR PORTFOLIO:
   P&L:     +14.30%
   Survival score: 0.742
 Holdings:
-  BTC/USDT: 0.120000 units
-
-YOUR LAST 10 DECISIONS:
-  Round 38: BUY ETHUSDT $2,000 → WIN (signal was +0.55)
-    Reasoning: "Strong momentum aligned with BTC leadership..."
-  Round 37: SELL SOLUSDT $1,500 → LOSS (signal was +0.12)
-  ...
-
-PERFORMANCE INSIGHTS:
-  ⚠ LOSING STREAK: 2 consecutive losses — adapt now.
-Per-pair win rates (last 20 trades):
-  SOLUSDT      win rate: 25% (4 trades) ← AVOID
-  ETHUSDT      win rate: 75% (4 trades) ← STRONG
-  BTCUSDT      win rate: 50% (8 trades)
+  BTC/USDT: 0.120000 units  [entry $67,200 | +2.1% | held 3 rounds]
 
 RIVALS:
   BETA [Contrarian]: $9,840 (-1.6%) survival=0.38 | holds: ETH/USDT | recent: BUY→HOLD→SELL
   GAMMA [Risk Manager]: $10,120 (+1.2%) survival=0.61 | holds: BTC/USDT,ETH/USDT | recent: HOLD→HOLD→BUY
 
-PORTFOLIO RULES:
-  - You can hold UP TO 5 different pairs simultaneously
-  - A BUY does NOT require selling existing holdings
-  - Spreading across 2-4 uncorrelated pairs reduces risk
-
-SURVIVAL RULES:
-  - Cull check every 10 rounds: lowest survival score gets threatened
-  - 3 consecutive last-place rounds → auto-eliminated
-  ...
-
 🟢 THREAT STATUS: Safe.
 ```
 
-If the agent is threatened, the final line expands into the full **Threat Response Playbook** (see [Threat Response Playbook](#5-threat-response-playbook) above).
+The LLM is instructed to respond with **a single plain-text sentence** (≤80 tokens) describing the agent's current psychological state. No JSON, no trading decision — only personality flavour.
 
 ---
 
-### 4. GPT-4o Decision (`core/agent.js → decide`)
+### 4. Deterministic Strategy Engine (`core/strategy.js → decide`)
 
-The prompt is sent to GPT-4o as the `system` message. The user message is always the same: `"Make your decision now."` GPT-4o must respond **only in JSON** — no markdown, no prose:
+Every tick each agent's decision is made by a deterministic rules engine — no LLM involved. The engine dispatches to an archetype-specific function based on `ctx.agentName`:
 
-```json
-{
-  "personality": "Riding the BTC surge, doubling down before rivals catch up.",
-  "action":      "BUY",
-  "pair":        "BTCUSDT",
-  "amount_usd":  2000,
-  "reasoning":   "BTC signal_score +0.62 is the strongest on the board, RSI at 68 with volume z-score +2.1 confirms real buying pressure. BETA is going contrarian on ETH so I'll stay differentiated."
-}
+**ALPHA** (`alphaDecide`):
+1. Scans held positions for exit conditions (momentum reversed, selling pressure, deadweight)
+2. Selects the worst-scoring qualifying exit and executes it
+3. If no exit needed, searches for the highest-scoring BUY candidate passing all entry filters
+4. Returns `HOLD` if no qualifying signal exists
+
+**BETA** (`betaDecide`):
+1. Checks existing positions for exhausted-thesis exits (rivals caught up, greed extreme, signal normalised)
+2. Ranks potential entries by `funding_signal` descending (most crowded shorts first)
+3. Enters the top candidate when it passes funding or fear filter and rivals don't already hold it
+
+**GAMMA** (`gammaDecide`):
+1. Stops out at −5% loss (before checking anything else)
+2. Exits any position where the signal is bearish or the profit target is met with flow turning
+3. Only considers a BUY if cash ratio, Fear & Greed, and all four signal filters pass
+4. Verifies post-trade cash ratio before executing
+
+**Kelly position sizing** (`kellyFraction`):
+- Once a pair has ≥6 historical trades, size is determined by Half-Kelly:
+  `f_half = 0.5 × (b×p − q) / b` where `b = avgWin/avgLoss`, `p = winRate`
+- Negative Kelly (negative expectancy) → position size = 0 (skip the trade entirely)
+- Capped at 2× the base `buy_size_pct` to prevent over-betting
+- Falls back to the archetype's `buy_size_pct` when fewer than 6 trades exist
+
+**Conviction scaling:** size is further multiplied by `clamp(|signal_score| / 0.5, 0.5, 1.0)` — weaker signals get smaller positions.
+
+The decision returned is: `{ action, pair, amount_usd, reasoning, signal_score, personality }` — identical interface to the old GPT-4o response.
+
+---
+
+### 5. Periodic LLM Synthesis (`core/agent.js → synthesize`)
+
+Every `SYNTHESIS_EVERY_N_ROUNDS` (default: 20) rounds, GPT-4o is called **once per agent** to generate a personality sentence:
+
+```
+Input:  full context (signals, portfolio, rivals, last decision reasoning)
+Output: one plain-text sentence, ≤80 tokens
+        e.g. "Riding BTC's surge with conviction — rivals are behind and I'm not slowing down."
 ```
 
-| Field | Constraints |
-|---|---|
-| `personality` | One sentence — the agent's psychological state this round. Shown on the dashboard. |
-| `action` | Must be `"BUY"`, `"SELL"`, or `"HOLD"` |
-| `pair` | Must be a valid pair symbol from the signal list (e.g. `BTCUSDT`). Invalid pairs default to `BTCUSDT`. |
-| `amount_usd` | USD value to spend (BUY) or exit (SELL). `0` for HOLD. |
-| `reasoning` | 2–3 sentences citing specific signal scores and rival positions. Stored in memory and shown in the log. |
+This sentence is attached to the next decision broadcast and displayed on the dashboard. It has no effect on the trading decision itself.
 
-If the OpenAI call fails (timeout, rate limit, JSON parse error), the agent automatically HOLDs and logs the error.
+If the OpenAI call fails, the previous personality sentence is retained — the simulation continues unaffected.
 
 ---
 
-### 5. Decision Validation & Execution (`core/world.js → applyDecision`)
+### 6. Decision Validation & Execution (`core/world.js → applyDecision`)
 
-Before any trade executes, the engine validates and enforces archetype rules:
+Before any trade executes, the engine validates and enforces archetype rules, then applies realistic execution costs:
 
-- **BUY**: deducted from cash; quantity calculated at current live price; position opened or added to
-- **SELL**: position closed or reduced; proceeds returned to cash; outcome (WIN/LOSS) computed vs. average entry price
-- **HOLD**: no change; decision still stored in memory with the current market price as context
-- **GAMMA cash floor**: BUY orders that would push cash below 40% of total value are **blocked** — the trade becomes a HOLD
-- **GAMMA position cap**: BUY orders that would push open positions above 2 pairs are **blocked**
+**Execution model:**
+- **BUY**: filled at **ask price** (`price × (1 + halfSpread)`); cash deducted is `amount_usd × (1 + TAKER_FEE_PCT)`
+- **SELL**: filled at **bid price** (`price × (1 − halfSpread)`); proceeds are `qty × bidPrice × (1 − TAKER_FEE_PCT)`
+- Half-spread is tier-dependent: LOW 0.015%, MEDIUM 0.04%, HIGH 0.075% (per side)
+
+**Validation:**
+- **HOLD**: no change; decision stored in memory
+- **GAMMA cash floor**: BUY orders that would push cash below 40% of total value are blocked — becomes HOLD
+- **GAMMA position cap**: BUY orders that would push open positions above 2 pairs are blocked
+- **Volume limit**: BUY is capped so the trade is no more than 0.5% of the pair's 20h USD volume (`vol_usd_20h`)
+- **Global exposure**: BUY is blocked if total invested already exceeds `MAX_EXPOSURE_PCT` (80%) of portfolio
 - **Stop-loss**: if any open position is down more than 8% from average entry, it is auto-sold before the agent's decision is processed
 
 ---
 
-### 6. Survival Scoring (`core/world.js → endTick`)
+### 7. Survival Scoring (`core/world.js → endTick`)
 
 After all three agents have decided, the engine computes survival scores and runs survival checks:
 
@@ -391,25 +533,27 @@ Holdings:
 One row per trading pair, updated each tick:
 
 ```
-BTC/USDT   ████████░░  +0.62  RSI:68  trending_up
-ETH/USDT   ██████░░░░  +0.41  RSI:61  trending_up
-SOL/USDT   ░░░█████░░  -0.31  RSI:44  ranging
+BTC/USDT   ████████░░  +0.62  RSI:68  fund=-0.12  cvd=+0.41  trending_up
+ETH/USDT   ██████░░░░  +0.41  RSI:61  fund=+0.05  cvd=+0.22  trending_up
+SOL/USDT   ░░░█████░░  -0.31  RSI:44  fund=+0.38  cvd=-0.15  ranging
 ```
 
 | Column | What it means |
 |---|---|
 | Pair name | The trading pair, e.g. `BTC/USDT` |
-| Bar `████░░░░` | Visual representation of signal strength. Full blocks = stronger signal. The bar fills left-to-right for the absolute magnitude — a score of -0.8 fills 8/10 blocks just like +0.8. |
-| Score `+0.62` | **Composite signal score**, range -1 to +1. Positive = bullish signal, negative = bearish. This is the weighted combination of momentum, RSI, mean reversion, and BTC leadership. Agents use this to decide whether to BUY, SELL, or HOLD. |
-| `RSI:68` | **14-period RSI.** Above 70 = overbought (potential reversal down). Below 30 = oversold (potential reversal up). Around 50 = neutral. |
-| Regime | **Market regime** classifier for the pair: `trending_up`, `trending_down`, `ranging`, or `volatile`. In volatile or ranging markets the signal score is dampened — agents should trade less aggressively. |
+| Bar `████░░░░` | Visual representation of signal strength. The bar fills for the absolute magnitude — ±0.8 both fill 8/10 blocks. |
+| Score `+0.62` | **Composite signal score**, range −1 to +1. Positive = bullish, negative = bearish. Weighted combination of funding rate, CVD, momentum, RSI, and Fear & Greed. |
+| `RSI:68` | **14-period Wilder RSI.** Above 70 = overbought. Below 30 = oversold. Around 50 = neutral. |
+| `fund=` | **Funding signal** in [−1, +1]. Positive = crowded shorts (contrarian bullish). Negative = crowded longs (contrarian bearish). BETA and ALPHA use this as a primary filter. |
+| `cvd=` | **Cumulative Volume Delta** in [−1, +1]. Positive = net taker buy pressure. Negative = net taker sell pressure. Required for ALPHA and GAMMA entries. |
+| Regime | **Market regime** classifier: `trending_up`, `trending_down`, `ranging`, or `volatile`. Signal score is dampened in ranging (×0.6) and volatile (×0.3) regimes. |
 
 **Colour coding:**
 - 🟢 Green — score > 0.3 (bullish — ALPHA will likely buy)
-- 🔴 Red — score < -0.3 (bearish — positions may be sold)
-- 🟡 Yellow — score between -0.3 and +0.3 (neutral, agents likely HOLD)
+- 🔴 Red — score < −0.3 (bearish — ALPHA/GAMMA may exit)
+- 🟡 Yellow — score between −0.3 and +0.3 (neutral)
 
-Press **S** to toggle between compact view (one line per pair) and full view (shows all individual signal components: momentum, volume z-score, mean reversion, Bollinger position, RSI divergence).
+Press **S** to toggle between compact view (one line per pair) and full view (shows all individual signal components: funding, CVD, momentum, volume z-score, Bollinger position, RSI divergence).
 
 ---
 
@@ -486,25 +630,21 @@ Each decision record includes:
 - The action taken, pair, and USD amount
 - **Explicit WIN/LOSS label** based on price movement since entry (BUY) or after exit (SELL)
 - The signal score at the time of the decision
-- The agent's own reasoning from that round
+- The agent's reasoning from that round
 
-This lets GPT-4o identify patterns: *"I bought DOGE on a +0.4 signal three times and lost each time."*
+This memory is surfaced in the periodic LLM synthesis so GPT-4o can write personality text that reflects genuine performance history.
 
 #### 2. Losing Streak Counter
-The prompt explicitly states the number of consecutive losses:
-- 1 loss → neutral notice
-- 2+ losses → `⚠ LOSING STREAK: N consecutive losses — your current approach is not working, adapt now.`
+The context tracks consecutive losses. When the survival score drops due to a losing streak, the **Adaptation Bonus (+0.15)** is awarded if the agent's dominant strategy shifts — e.g. from mostly BUY to mostly SELL or HOLD.
 
-This directly triggers the **Adaptation Bonus (+0.15)** in the survival score when the agent changes its dominant strategy after a streak.
-
-#### 3. Per-Pair Win Rate (last 20 trades)
-A table of win rates per pair is injected into every prompt:
+#### 3. Per-Pair Win Rate and Kelly Sizing (last 20 trades)
+Per-pair stats (win rate, avgWin, avgLoss, trade count) feed directly into the Kelly position sizer in `core/strategy.js`:
 ```
-SOLUSDT      win rate: 25% (4 trades) ← AVOID
-ETHUSDT      win rate: 75% (4 trades) ← STRONG
-BTCUSDT      win rate: 50% (6 trades)
+SOLUSDT   win rate: 25% (4 trades)  → Kelly negative → position size = 0 (no trade)
+ETHUSDT   win rate: 75% (4 trades)  → Kelly positive → larger position
+BTCUSDT   win rate: 50% (6 trades)  → moderate Kelly → standard size
 ```
-Pairs below 40% win rate are flagged `← AVOID`. Pairs above 60% are flagged `← STRONG`. Agents are expected to rotate away from losing pairs and concentrate on their historical winners.
+Pairs with fewer than 6 trades fall back to the archetype's default `buy_size_pct`.
 
 #### 4. Rival Action History (last 3 ticks)
 Instead of only the last action, each rival now shows their recent pattern:
@@ -578,7 +718,7 @@ curl -X POST http://localhost:3000/command \
 
 ## Backtester
 
-Test the signal strategy against historical data without spending OpenAI credits.
+Test the signal strategy against historical data without spending OpenAI credits. All backtests use the same realistic execution model as the live engine: bid-ask spreads by vol tier and taker fees on every fill.
 
 ### Step 1 — Download historical data
 
@@ -595,13 +735,16 @@ node backtester/fetch-history.js --pairs BTC --period 90 --interval 1h --force
 
 Data is cached in `data/ohlcv/`. Re-runs skip download unless `--force` is passed.
 
-### Step 2 — Run backtest
+> **Note:** Backtests run with `backtest: true` — all external API calls (funding rates, CVD, Fear & Greed) are skipped and those signals default to neutral. The backtest validates the price-based signals (momentum, RSI, volume z-score) plus the execution model.
+
+### Step 2 — Run in-sample / holdout backtest
 
 ```bash
 node backtester/backtest.js --pairs BTC,ETH --period 30 --interval 1h
 ```
 
-Output:
+The data is split 75% in-sample / 25% holdout. Five quality gates are evaluated on the holdout set:
+
 ```
 ── IN-SAMPLE (540 bars) ──
   Sharpe:        1.84
@@ -610,15 +753,56 @@ Output:
   Profit factor: 1.41
   Total return:  +8.7%
 
+── HOLDOUT (180 bars) ──
+  Sharpe:        1.61
+  Max drawdown:  14.1%
+  Win rate:      52.8%
+  Profit factor: 1.33
+  Total return:  +3.2%
+
 ── GATES ──
   [PASS]  In-sample Sharpe  > 1.2
   [PASS]  Holdout Sharpe    > 0.9×IS
   [PASS]  Max drawdown      < 20%
   [PASS]  Win rate          > 52%
   [PASS]  Profit factor     > 1.3
+
+  Overall: ✅ ALL PASS
 ```
 
 Results are saved to `data/backtest_results/<timestamp>.json`.
+
+### Step 3 — Walk-forward validation (recommended)
+
+Walk-forward testing is the gold standard for avoiding overfitting. It rolls a training + test window forward through the full dataset and measures out-of-sample performance in each fold:
+
+```bash
+# Default: 30-day train / 7-day test windows, all 15 pairs
+node backtester/backtest.js --pairs ALL --period 365 --interval 1h --walk-forward
+
+# Custom windows
+node backtester/backtest.js --pairs BTC,ETH --period 180 --interval 1h \
+  --walk-forward --train-days 45 --test-days 10
+```
+
+Output:
+```
+── PER-WINDOW (out-of-sample) ──
+  [PASS]  W 1  Sharpe=  1.12  Ret=  +2.3%  DD=  -8.1%  WR= 54.0%  trades=18
+  [PASS]  W 2  Sharpe=  0.88  Ret=  +1.1%  DD= -11.2%  WR= 51.3%  trades=14
+  [FAIL]  W 3  Sharpe= -0.21  Ret=  -0.9%  DD= -16.4%  WR= 44.8%  trades=9
+  ...
+
+── AGGREGATE ──
+  Avg out-of-sample Sharpe: 0.72
+  Avg out-of-sample return: +1.4%
+  Avg max drawdown:         -10.2%
+  Profitable windows:       75% (9/12)
+
+  Verdict: ✅  Edge appears consistent — avg Sharpe > 0.5 and ≥60% profitable windows
+```
+
+A strategy is considered to have a **consistent edge** only when `avgSharpe > 0.5` AND at least 60% of windows are profitable. Do not trade a strategy that fails this check live.
 
 ### Tune signal weights
 
@@ -626,7 +810,7 @@ Results are saved to `data/backtest_results/<timestamp>.json`.
 node backtester/backtest.js --pairs ALL --period 365 --interval 1h --tune-weights
 ```
 
-Grid-searches `momentum_1h` and `rsi_norm` weights to maximise in-sample Sharpe, then validates on the holdout set.
+Grid-searches `momentum_1h` and `rsi_norm` weights to maximise in-sample Sharpe, then validates on the holdout set. Walk-forward can be combined with `--tune-weights` to verify that the optimised weights also generalise.
 
 ---
 
@@ -800,26 +984,41 @@ pm2 restart agent-battle-api
 | Dashboard shows `RECONNECTING` | Check `pm2 logs` and verify `WS_TOKEN` matches |
 | Agents always HOLD | Not enough price history yet — signals need ≥20 bars to compute |
 | `better-sqlite3` build fails | Ensure Node.js 20 LTS is installed, not a newer version |
-| OpenAI rate limit errors | Increase `TICK_INTERVAL_MS` to 120000 or higher |
+| OpenAI rate limit errors | LLM only runs every 20 rounds — rate limits are unlikely. Increase `SYNTHESIS_EVERY_N_ROUNDS` in `core/world.js` if needed |
+| Funding/CVD signals all zero | Binance API unreachable — check internet access. Signals default to neutral; trading continues |
 
 ---
 
 ## Architecture
 
 ```
-prices + history  →  signals.js  →  SignalMap
-world.getSnapshot()  +  SignalMap  →  agent.js  →  Decision[]
-Decision[]  →  world.applyDecision()  →  world.endTick()  →  new snapshot
+Binance prices + klines + funding rates + Fear & Greed
+    │
+    ▼
+core/signals.js  →  SignalVector[] (per pair, per tick)
+    │
+    ▼
+core/world.js → getPromptContext()  →  AgentContext (per agent)
+    │
+    ├─► core/strategy.js → decide()  →  Decision (deterministic, every tick)
+    │
+    └─► core/agent.js → synthesize()  →  personality string (LLM, every N rounds)
+    │
+    ▼
+core/world.js → applyDecision()  →  world.endTick()  →  new snapshot → SQLite
 ```
 
 | File | Role |
 |---|---|
-| `core/world.js` | Single source of truth. Owns SQLite DB + all state. |
-| `core/signals.js` | Pure function: `(prices, history) → SignalVector[]` |
-| `core/agent.js` | Pure async function: `(context, openai) → Decision` |
-| `engine.js` | Tick loop — wires world + signals + agent together |
+| `core/world.js` | Single source of truth. Owns SQLite DB, all agent state, execution model. |
+| `core/signals.js` | Async: fetches funding rates, CVD, F&G; computes `SignalVector[]` |
+| `core/strategy.js` | Deterministic rules engine: `decide(ctx)` → `Decision` |
+| `core/agent.js` | Periodic LLM synthesis: `synthesize(ctx, openai)` → personality string |
+| `engine.js` | Tick loop — wires world + signals + strategy + synthesize |
 | `api.js` | WebSocket + REST — subscribes to engine events |
-| `backtester/` | Offline strategy testing against Binance OHLCV data |
+| `backtester/backtest.js` | In-sample/holdout + walk-forward backtester |
+| `backtester/simulate.js` | Single-tick simulation with identical execution model to live engine |
+| `backtester/report.js` | Formatted backtest and walk-forward output with quality gates |
 | `dashboard/` | Terminal TUI — connects via WebSocket, never mutates state |
 | `data/sim.db` | SQLite — append-only event ledger (never commit this) |
 
@@ -829,13 +1028,13 @@ All state changes are logged as rows in the `ticks` table. Agent portfolios are 
 
 - Full crash recovery with zero code changes
 - Time-travel debugging: replay any past state
-- The backtester reuses the exact same logic as the live engine
+- `capital_after` is stored in each trade payload so state reconstruction is always accurate regardless of fee model changes
 
 ### Stack
 
 - **Node.js 20 LTS** · CommonJS · no TypeScript
 - **better-sqlite3** — synchronous SQLite
-- **openai** — GPT-4o for agent decisions
+- **openai** — GPT-4o for periodic personality synthesis
 - **express + ws** — REST + WebSocket API
 - **blessed** — terminal TUI
-- **simple-statistics** — signal math
+- **simple-statistics** — signal math (RSI, stddev, Sharpe)

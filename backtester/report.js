@@ -56,6 +56,43 @@ function printMetrics(m) {
   console.log(`  Trades:        ${m.trades}`)
 }
 
+function printWalkForward(results) {
+  const { walkForward: wf, pairs, trainDays, testDays, interval } = results
+  const { windows, avgSharpe, avgDrawdown, avgReturn, posWindowsPct } = wf
+
+  console.log('\n' + '═'.repeat(56))
+  console.log('  WALK-FORWARD REPORT')
+  console.log('  Pairs:      ' + pairs.join(', '))
+  console.log('  Train/Test: ' + trainDays + 'd / ' + testDays + 'd  |  Interval: ' + interval)
+  console.log('  Windows:    ' + windows.length)
+  console.log('═'.repeat(56))
+
+  console.log('\n── PER-WINDOW (out-of-sample) ──')
+  for (const w of windows) {
+    const pass = w.sharpe > 0 && w.totalReturn > 0
+    console.log(
+      `  [${pass ? 'PASS' : 'FAIL'}]  W${String(w.window).padStart(2)}` +
+      `  Sharpe=${fmt(w.sharpe, 2).padStart(6)}` +
+      `  Ret=${pct(w.totalReturn).padStart(8)}` +
+      `  DD=${pct(w.maxDrawdown).padStart(7)}` +
+      `  WR=${pct(w.winRate).padStart(7)}` +
+      `  trades=${w.trades}`
+    )
+  }
+
+  console.log('\n── AGGREGATE ──')
+  console.log(`  Avg out-of-sample Sharpe: ${fmt(avgSharpe, 3)}`)
+  console.log(`  Avg out-of-sample return: ${pct(avgReturn)}`)
+  console.log(`  Avg max drawdown:         ${pct(avgDrawdown)}`)
+  console.log(`  Profitable windows:       ${(posWindowsPct * 100).toFixed(0)}% (${Math.round(posWindowsPct * windows.length)}/${windows.length})`)
+
+  const edgeHolds = avgSharpe > 0.5 && posWindowsPct >= 0.6
+  console.log('\n  Verdict: ' + (edgeHolds
+    ? '✅  Edge appears consistent — avg Sharpe > 0.5 and ≥60% profitable windows'
+    : '❌  Edge is not consistent — do NOT trade this live'))
+  console.log('═'.repeat(56) + '\n')
+}
+
 function save(results) {
   const dir  = path.join(__dirname, '../data/backtest_results')
   fs.mkdirSync(dir, { recursive: true })
@@ -72,4 +109,4 @@ function pct(v) {
   return v == null ? 'n/a' : (v * 100).toFixed(2) + '%'
 }
 
-module.exports = { print, save }
+module.exports = { print, printWalkForward, save }

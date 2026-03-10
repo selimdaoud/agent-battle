@@ -6,7 +6,8 @@ const OpenAI       = require('openai')
 const World        = require('./core/world')
 const { C }        = require('./core/world')
 const signals      = require('./core/signals')
-const { decide }   = require('./core/agent')
+const strategy     = require('./core/strategy')
+const { synthesize } = require('./core/agent')
 
 // ── Market price fetcher ───────────────────────────────────────────────────────
 async function fetchPrices(world) {
@@ -36,12 +37,21 @@ async function tick(world, openai, emitter) {
   world.updatePrices(prices)
 
   const history = world.getPriceHistory()
-  const sigs    = signals.computeSignals(prices, history)
+  const sigs    = await signals.computeSignals(prices, history)
 
   const alive   = Object.values(world.getSnapshot().agents).filter(a => a.alive)
   const ctxs    = alive.map(a => world.getPromptContext(a.name, sigs, prices))
 
-  const decisions = await Promise.all(ctxs.map(ctx => decide(ctx, openai)))
+  // Deterministic strategy decisions — no LLM involved
+  const decisions = ctxs.map(ctx => strategy.decide(ctx))
+
+  // Periodic LLM synthesis: update personality every N rounds (not every tick)
+  const round = world.getSnapshot().round
+  if (round % C.STRATEGY.SYNTHESIS_EVERY_N_ROUNDS === 0) {
+    await Promise.all(ctxs.map(async (ctx, i) => {
+      decisions[i].personality = await synthesize(ctx, openai)
+    }))
+  }
 
   decisions.forEach((d, i) => {
     const result = world.applyDecision(alive[i].name, d, prices)
