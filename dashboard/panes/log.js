@@ -42,19 +42,20 @@ function create(parent) {
 
     if (trade) {
       const enforced = decision && decision.enforced_reason ? ` {yellow-fg}[${decision.enforced_reason}]{/yellow-fg}` : ''
+      const feeStr   = trade.fee > 0 ? ` {magenta-fg}fee $${trade.fee.toFixed(3)}{/magenta-fg}` : ''
       const label = `{green-fg}${agent} ${trade.action} ${trade.pair}` +
                     ` $${Math.round(trade.proceeds_or_cost).toLocaleString()}` +
-                    ` @ $${trade.price?.toLocaleString()}{/green-fg}${enforced}`
-      append(label, 'TRADE')
+                    ` @ $${trade.price?.toLocaleString()}{/green-fg}${feeStr}${enforced}`
       if (decision && decision.reasoning) {
         append(`  {cyan-fg}↳ ${decision.reasoning}{/cyan-fg}`, 'TRADE')
       }
+      append(label, 'TRADE')
     } else if (decision) {
       const reason = decision.enforced_reason ? ` {yellow-fg}[${decision.enforced_reason}]{/yellow-fg}` : ''
-      append(`{grey-fg}${agent} HOLD ${decision.pair || ''}${reason}{/grey-fg}`, 'TRADE')
       if (decision.reasoning) {
         append(`  {grey-fg}↳ ${decision.reasoning}{/grey-fg}`, 'TRADE')
       }
+      append(`{grey-fg}${agent} HOLD ${decision.pair || ''}${reason}{/grey-fg}`, 'TRADE')
     }
   }
 

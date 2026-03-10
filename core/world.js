@@ -177,7 +177,8 @@ function _defaultAgent(name) {
     consecutiveLastPlace: 0,
     threatened:           false,
     survivalScore:        0,
-    portfolioHistory:     [C.INITIAL_CAPITAL]
+    portfolioHistory:     [C.INITIAL_CAPITAL],
+    totalFees:            0
   }
 }
 
@@ -259,11 +260,13 @@ class World {
         if (t.action === 'BUY') {
           const cost = t.qty * t.price * (1 + C.SLIPPAGE_PCT)
           agent.capital -= cost
+          agent.totalFees += t.qty * t.price * C.TAKER_FEE_PCT
           agent.holdings[t.pair] = (agent.holdings[t.pair] || 0) + t.qty
           agent.entryPrices[t.pair] = t.price
           agent.entryRounds[t.pair] = row.round
         } else if (t.action === 'SELL') {
           const proceeds = t.qty * t.price * (1 - C.SLIPPAGE_PCT)
+          agent.totalFees += t.qty * t.price * C.TAKER_FEE_PCT
           agent.capital += proceeds
           agent.holdings[t.pair] = (agent.holdings[t.pair] || 0) - t.qty
           if (agent.holdings[t.pair] <= 1e-10) {
@@ -541,8 +544,10 @@ class World {
       const askPrice   = price * (1 + halfSpread)
       const qty        = decision.amount_usd / askPrice
       const cost       = decision.amount_usd * (1 + C.TAKER_FEE_PCT)
+      const fee        = decision.amount_usd * C.TAKER_FEE_PCT
 
       agent.capital -= cost
+      agent.totalFees = (agent.totalFees || 0) + fee
       agent.holdings[decision.pair] = (agent.holdings[decision.pair] || 0) + qty
       agent.entryPrices[decision.pair] = askPrice   // entry tracked at ask
       agent.entryRounds[decision.pair] = this._snapshot.round
@@ -553,6 +558,7 @@ class World {
         qty,
         price,
         proceeds_or_cost: cost,
+        fee,
         capital_after:    agent.capital
       }
     } else if (decision.action === 'SELL' && price) {
@@ -565,8 +571,10 @@ class World {
         const halfSpread = _pairSpread(decision.pair)
         const bidPrice   = price * (1 - halfSpread)
         const proceeds   = qty * bidPrice * (1 - C.TAKER_FEE_PCT)
+        const fee        = qty * bidPrice * C.TAKER_FEE_PCT
 
         agent.capital += proceeds
+        agent.totalFees = (agent.totalFees || 0) + fee
         agent.holdings[decision.pair] = (agent.holdings[decision.pair] || 0) - qty
         if (agent.holdings[decision.pair] <= 1e-10) {
           delete agent.holdings[decision.pair]
@@ -580,6 +588,7 @@ class World {
           qty,
           price,
           proceeds_or_cost: proceeds,
+          fee,
           capital_after:    agent.capital
         }
         if (decision.enforced_reason) trade.enforced_reason = decision.enforced_reason

@@ -57,10 +57,11 @@ function formatSignal(s, compact) {
   else if (score < -0.3) color = 'red'
   else                   color = 'yellow'
 
-  const label = (C.LABELS[s.pair] || s.pair).padEnd(10)
-  const rsi   = s.rsi_14 != null ? `RSI:${Math.round(s.rsi_14)}` : 'RSI:---'
+  const label    = (C.LABELS[s.pair] || s.pair).padEnd(10)
+  const rsi      = s.rsi_14 != null ? `RSI:${Math.round(s.rsi_14)}` : 'RSI:---'
+  const priceStr = s.price != null ? fmtPrice(s.price).padStart(12) : ''.padStart(12)
 
-  const main = `{${color}-fg}${label} ${bar} ${scoreStr.padStart(6)}{/${color}-fg}  ${rsi.padEnd(7)}  ${s.regime}`
+  const main = `{${color}-fg}${label}{/${color}-fg} {grey-fg}${priceStr}{/grey-fg}  {${color}-fg}${bar} ${scoreStr.padStart(6)}{/${color}-fg}  ${rsi.padEnd(7)}  ${s.regime}`
 
   if (compact) return main
 
@@ -75,6 +76,12 @@ function formatSignal(s, compact) {
 
 function fmtN(v) {
   return v != null ? Number(v).toFixed(2) : 'n/a'
+}
+
+function fmtPrice(p) {
+  if (p >= 1000)  return '$' + p.toLocaleString('en-US', { maximumFractionDigits: 0 })
+  if (p >= 1)     return '$' + p.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 3 })
+  return '$' + p.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 5 })
 }
 
 module.exports = { create }

@@ -59,6 +59,7 @@ function create(parent) {
 
     // ── Aggregate calculations ────────────────────────────────────────────────
     const combinedTotal  = allAgents.reduce((s, a) => s + totalValue(a, prices), 0)
+    const combinedFees   = allAgents.reduce((s, a) => s + (a.totalFees || 0), 0)
     const combinedCash   = allAgents.reduce((s, a) => s + a.capital, 0)
     const combinedCrypto = combinedTotal - combinedCash
     const combinedPnl    = ((combinedTotal - TOTAL_START) / TOTAL_START * 100).toFixed(1)
@@ -114,6 +115,7 @@ function create(parent) {
     summary.setContent(
       ` {bold}PORTFOLIO OVERVIEW{/bold}` +
       `   Total: {bold}$${fmt(combinedTotal)}{/bold}` +
+      `   Fees: {magenta-fg}$${combinedFees.toFixed(3)}{/magenta-fg}` +
       `   P&L: {${pnlColor}-fg}{bold}${pnlSign}${combinedPnl}%{/bold}{/${pnlColor}-fg}` +
       `   Cash: {bold}$${fmt(combinedCash)}{/bold}` +
       `   Crypto: {bold}$${fmt(combinedCrypto)}{/bold}` +
@@ -155,11 +157,16 @@ function create(parent) {
       const agentCrypto = total - agent.capital
       const agentExp    = total > 0 ? (agentCrypto / total * 100).toFixed(0) : 0
 
+      const feesStr = agent.totalFees > 0
+        ? `{red-fg}$${agent.totalFees.toFixed(3)}{/red-fg}`
+        : '{grey-fg}$0.000{/grey-fg}'
+
       box.setContent(
         `${statusIcon} ${rankStr}\n` +
         `survival: {bold}${agent.survivalScore.toFixed(3)}{/bold}   respawns: ${agent.respawnCount}\n` +
         `Total: {bold}$${fmt(total)}{/bold}  P&L: {${pnlCol}-fg}{bold}${pnlSign}${pnl}%{/bold}{/${pnlCol}-fg}\n` +
         `Cash: $${fmt(agent.capital)}  Crypto: $${fmt(agentCrypto)}  Exp: ${agentExp}%\n` +
+        `Fees paid: ${feesStr}\n` +
         `─────────────────────\n` +
         `Holdings:\n${holdLines || '  (none)'}\n` +
         `─────────────────────\n` +
