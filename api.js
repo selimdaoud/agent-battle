@@ -16,6 +16,7 @@ const wss    = new WebSocketServer({ server })
 const TOKEN  = process.env.WS_TOKEN
 
 app.use(express.json())
+app.use(express.static('public'))
 
 // ── Broadcast helper ──────────────────────────────────────────────────────────
 function broadcast(msg) {
