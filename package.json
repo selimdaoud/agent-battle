@@ -6,7 +6,8 @@
     "start": "node engine.js",
     "api": "node api.js",
     "dashboard": "node dashboard/tui.js",
-    "backtest": "node backtester/backtest.js"
+    "backtest": "node backtester/backtest.js",
+    "reset": "bash reset.sh"
   },
   "dependencies": {
     "better-sqlite3": "^12.6.2",

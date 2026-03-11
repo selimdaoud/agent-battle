@@ -4,6 +4,7 @@
 # Database — runtime state, not source code
 data/sim.db
 data/ohlcv/
+sessions/
 
 # Dependencies
 node_modules/

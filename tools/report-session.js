@@ -213,8 +213,16 @@ lines.push(`## Executive Summary`)
 lines.push(``)
 lines.push(`| Agent | Trades | Win Rate | Expectancy | Avg Hold | Fees | Elim | Respawns |`)
 lines.push(`|-------|--------|----------|------------|----------|------|------|----------|`)
-for (const m of metrics) {
-  lines.push(`| **${m.agent}** | ${m.tradeCount} | ${m.winRate.toFixed(1)}% | ${pct(m.expectancy)} | ${m.avgHold.toFixed(1)}r | $${m.totalFees.toFixed(3)} | ${m.eliminations} | ${m.respawns} |`)
+for (const name of agents) {
+  const m   = metrics.find(x => x.agent === name)
+  const sum = agentSummary[name]
+  if (m) {
+    lines.push(`| **${m.agent}** | ${m.tradeCount} | ${m.winRate.toFixed(1)}% | ${pct(m.expectancy)} | ${m.avgHold.toFixed(1)}r | $${m.totalFees.toFixed(3)} | ${m.eliminations} | ${m.respawns} |`)
+  } else if (sum) {
+    const openBuys = sum.totalTrades || 0
+    const note = openBuys > 0 ? `${openBuys} open` : '—'
+    lines.push(`| ${name} | ${note} | — | — | — | $${(sum.totalFees || 0).toFixed(3)} | ${sum.eliminations || 0} | ${sum.respawns || 0} |`)
+  }
 }
 lines.push(``)
 if (winner) lines.push(`Best expectancy: **${winner.agent}** (${pct(winner.expectancy)} per trade)`)

@@ -29,11 +29,17 @@ fs.mkdirSync(outDir, { recursive: true })
 // ── Open DB ───────────────────────────────────────────────────────────────────
 const db = new Database(dbPath, { readonly: true })
 
-const roundRow = db.prepare("SELECT value FROM config WHERE key='current_round'").get()
-const totalRounds = roundRow ? parseInt(roundRow.value, 10) : 0
-
 const allTicks = db.prepare('SELECT * FROM ticks ORDER BY id ASC').all()
   .map(r => ({ ...r, payload: JSON.parse(r.payload) }))
+
+// Derive round count from actual ticks — avoids stale current_round after DB reset
+const uniqueRounds = new Set(allTicks.map(t => t.round))
+const totalRounds  = uniqueRounds.size
+
+if (totalRounds < 2) {
+  console.log(`Only ${totalRounds} round(s) in DB — skipping export (nothing meaningful to save).`)
+  process.exit(0)
+}
 
 // ── Build signal index: round → pair → signal data ───────────────────────────
 const signalIndex = {}

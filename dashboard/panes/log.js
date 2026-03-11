@@ -35,8 +35,8 @@ function create(parent) {
     return parts.length ? ` LOG [${parts.join(' | ')}] ` : ' LOG '
   }
 
-  function append(text, type, agent = null) {
-    entries.unshift({ text, type, agent })
+  function append(text, type, agent = null, hold = false) {
+    entries.unshift({ text, type, agent, hold })
     if (entries.length > 500) entries.pop()
     render()
   }
@@ -65,9 +65,9 @@ function create(parent) {
     } else if (decision) {
       const reason = decision.enforced_reason ? ` {yellow-fg}[${decision.enforced_reason}]{/yellow-fg}` : ''
       if (decision.reasoning) {
-        append(`  {grey-fg}↳ ${decision.reasoning}{/grey-fg}`, 'TRADE', agent)
+        append(`  {grey-fg}↳ ${decision.reasoning}{/grey-fg}`, 'TRADE', agent, true)
       }
-      append(`{grey-fg}${ts} ${agent} HOLD ${decision.pair || ''}${reason}{/grey-fg}`, 'TRADE', agent)
+      append(`{grey-fg}${ts} ${agent} HOLD ${decision.pair || ''}${reason}{/grey-fg}`, 'TRADE', agent, true)
     }
   }
 
@@ -104,6 +104,7 @@ function create(parent) {
       if (typeFilter === 'SURVIVAL' && e.type !== 'SURVIVAL') return false
       if (typeFilter === 'ERRORS'   && e.type !== 'ERROR')    return false
       if (agentFilter !== 'ALL' && e.agent !== agentFilter)   return false
+      if (agentFilter !== 'ALL' && e.hold)                    return false
       return true
     })
     box.setContent(visible.map(e => e.text).join('\n'))
