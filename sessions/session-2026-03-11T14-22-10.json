@@ -1,0 +1,84 @@
+{
+  "meta": {
+    "sessionId": "session-2026-03-11T14-22-10",
+    "exportedAt": "2026-03-11T14:23:50.064Z",
+    "startTs": 1773238930139,
+    "endTs": 1773238937745,
+    "durationHours": 0,
+    "totalRounds": 1
+  },
+  "agentSummary": {
+    "ALPHA": {
+      "totalTrades": 1,
+      "totalFees": 1.25,
+      "eliminations": 0,
+      "respawns": 0,
+      "threats": 0
+    },
+    "BETA": {
+      "totalTrades": 1,
+      "totalFees": 1,
+      "eliminations": 0,
+      "respawns": 0,
+      "threats": 0
+    },
+    "GAMMA": {
+      "totalTrades": 0,
+      "totalFees": 0,
+      "eliminations": 0,
+      "respawns": 0,
+      "threats": 0
+    },
+    "MEGA": {
+      "totalTrades": 0,
+      "totalFees": 0,
+      "eliminations": 0,
+      "respawns": 0,
+      "threats": 0
+    }
+  },
+  "closedTrades": [],
+  "survivalEvents": [],
+  "decisions": [
+    {
+      "round": 0,
+      "agent": "ALPHA",
+      "action": "BUY",
+      "pair": "SOLUSDT",
+      "amount_usd": 1250,
+      "signal_score": 0.16314489314051514,
+      "enforced": false,
+      "enforced_reason": null
+    },
+    {
+      "round": 0,
+      "agent": "BETA",
+      "action": "BUY",
+      "pair": "DOGEUSDT",
+      "amount_usd": 1000,
+      "signal_score": 0.10183183268555406,
+      "enforced": false,
+      "enforced_reason": null
+    },
+    {
+      "round": 0,
+      "agent": "GAMMA",
+      "action": "HOLD",
+      "pair": "BTCUSDT",
+      "amount_usd": 0,
+      "signal_score": null,
+      "enforced": false,
+      "enforced_reason": null
+    },
+    {
+      "round": 0,
+      "agent": "MEGA",
+      "action": "HOLD",
+      "pair": "BTCUSDT",
+      "amount_usd": 0,
+      "signal_score": null,
+      "enforced": false,
+      "enforced_reason": null
+    }
+  ]
+}

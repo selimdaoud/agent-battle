@@ -12,7 +12,12 @@
  * in agent.js to generate personality flavor text only.
  */
 
+const fs   = require('fs')
+const path = require('path')
 const { C } = require('./world')
+
+// MEGA config — loaded once at startup from agents/mega-config.json
+const megaConfig = JSON.parse(fs.readFileSync(path.join(__dirname, '../agents/mega-config.json'), 'utf8'))
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -329,6 +334,95 @@ function gammaDecide(ctx, smap, threatened) {
   return holdDecision('GAMMA: signal quality insufficient — preserving capital')
 }
 
+/**
+ * MEGA — Adaptive Synthesizer
+ * Regime-aware strategy loaded from agents/mega-config.json.
+ * Applies regime_overrides on top of base thresholds for each market condition.
+ */
+function megaDecide(ctx, smap, threatened) {
+  const baseCfg = megaConfig.strategy
+  const regime  = ctx.signals[0]?.regime || 'trending_up'
+  const ov      = megaConfig.regime_overrides[regime] || {}
+  const cfg     = { ...baseCfg, ...ov }
+
+  const threatAdj = threatened ? 0.08 : 0
+
+  // ── SELL: scan holdings for exits ──────────────────────────────────────────
+  let exitPair = null
+  let exitWhy  = ''
+
+  for (const [pair, qty] of Object.entries(ctx.holdings)) {
+    if (qty <= 0) continue
+    const s   = smap[pair]
+    if (!s) continue
+    const pct = unrealizedPct(pair, ctx)
+
+    const stopOut    = pct != null && pct < -cfg.sell_loss_pct
+    const flowBad    = s.cvd_norm < cfg.cvd_sell_max
+    const sigGone    = s.signal_score < (cfg.sell_signal + threatAdj)
+    const takePft    = pct != null && pct > cfg.sell_profit_pct && s.cvd_norm < 0
+    const deadweight = isDeadweight(pair, ctx)
+
+    if (stopOut) {
+      exitPair = pair
+      exitWhy  = `loss exceeds ${cfg.sell_loss_pct}% (${pct.toFixed(1)}%) — capital protection`
+      break
+    }
+    if (!exitPair && (flowBad || sigGone || takePft || deadweight)) {
+      exitPair = pair
+      if      (takePft)    exitWhy = `profit target ${cfg.sell_profit_pct}% reached (${pct.toFixed(1)}%) with flow turning`
+      else if (flowBad)    exitWhy = `selling pressure (cvd=${s.cvd_norm.toFixed(2)})`
+      else if (deadweight) exitWhy = `deadweight after ${roundsHeld(pair, ctx)} rounds`
+      else                 exitWhy = `momentum gone (score=${s.signal_score.toFixed(2)})`
+    }
+  }
+
+  if (exitPair) {
+    const s = smap[exitPair]
+    return {
+      action:       'SELL',
+      pair:         exitPair,
+      amount_usd:   0,
+      reasoning:    `MEGA [${regime}] exiting ${C.LABELS[exitPair] || exitPair}: ${exitWhy}.`,
+      signal_score: s?.signal_score ?? 0
+    }
+  }
+
+  // ── BUY: find best candidate under regime-adjusted thresholds ──────────────
+  const positions = positionCount(ctx)
+  if (positions >= cfg.max_positions) return holdDecision(`MEGA [${regime}]: max positions reached`)
+
+  const cashRatio = ctx.capital / ctx.totalValue
+  if (cashRatio < cfg.cash_min_pct && !threatened) {
+    return holdDecision(`MEGA [${regime}]: cash reserve too low (${(cashRatio * 100).toFixed(0)}% < ${cfg.cash_min_pct * 100}%)`)
+  }
+
+  const candidates = ctx.signals
+    .filter(s =>
+      s.signal_score   > (cfg.buy_signal - threatAdj) &&
+      s.cvd_norm       > (threatened ? 0 : cfg.cvd_buy_min) &&
+      s.funding_signal < cfg.funding_buy_max &&
+      !ctx.holdings[s.pair] &&
+      positions < C.MAX_POSITIONS
+    )
+    .sort((a, b) => b.signal_score - a.signal_score)
+
+  if (candidates.length > 0) {
+    const s      = candidates[0]
+    const amount = buyAmount(s.pair, s.signal_score, ctx, cfg)
+    if (amount < 50) return holdDecision('MEGA: insufficient capital for sizing')
+    return {
+      action:       'BUY',
+      pair:         s.pair,
+      amount_usd:   amount,
+      reasoning:    `MEGA [${regime}] entering ${C.LABELS[s.pair] || s.pair}: score=${s.signal_score.toFixed(2)}, cvd=${s.cvd_norm.toFixed(2)}, fund=${s.funding_signal.toFixed(2)}. Threshold=${cfg.buy_signal.toFixed(2)} (regime-adjusted).`,
+      signal_score: s.signal_score
+    }
+  }
+
+  return holdDecision(`MEGA [${regime}]: no signal above threshold ${cfg.buy_signal.toFixed(2)}`)
+}
+
 // ── HOLD fallback ─────────────────────────────────────────────────────────────
 
 function holdDecision(reason) {
@@ -361,6 +455,8 @@ function decide(ctx) {
     decision = betaDecide(ctx, smap, threatened)
   } else if (name === 'GAMMA') {
     decision = gammaDecide(ctx, smap, threatened)
+  } else if (name === 'MEGA') {
+    decision = megaDecide(ctx, smap, threatened)
   } else {
     decision = holdDecision('unknown archetype')
   }

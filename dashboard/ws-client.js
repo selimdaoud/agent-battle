@@ -22,6 +22,9 @@ function connect(host, port, token, handlers) {
         case 'SURVIVAL':  handlers.onSurvival && handlers.onSurvival(data); break
         case 'WINNER':    handlers.onWinner   && handlers.onWinner(data);   break
         case 'ERROR':     handlers.onError    && handlers.onError(data);    break
+        case 'PIPELINE':     handlers.onPipeline    && handlers.onPipeline(data);    break
+        case 'PROPOSAL':     handlers.onProposal    && handlers.onProposal(data);    break
+        case 'LOG_HISTORY':  handlers.onLogHistory  && handlers.onLogHistory(data);  break
       }
     } catch (_) {}
   }

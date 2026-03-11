@@ -40,13 +40,14 @@ function create(parent, clientRef, logPane) {
     '{bold}[F]{/bold}         Force single tick',
     '{bold}[+][-]{/bold}      Cycle interval: 15s 30s 1m 5m 15m',
     '',
-    '{bold}[T][A/B/G]{/bold}  Threaten agent',
-    '{bold}[U][A/B/G]{/bold}  Un-threaten agent',
-    '{bold}[X][A/B/G]{/bold}  Terminate agent',
+    '{bold}[T][A/B/G/M]{/bold}  Threaten agent',
+    '{bold}[U][A/B/G/M]{/bold}  Un-threaten agent',
+    '{bold}[X][A/B/G/M]{/bold}  Terminate agent',
     '  then {bold}[E]{/bold}liminate / {bold}[R]{/bold}espawn',
     '',
     '{bold}[S]{/bold}         Toggle signal detail',
     '{bold}[L]{/bold}         Cycle log filter',
+    '{bold}[TAB]{/bold}       Cycle agent filter A/B/G/M/All',
     '{bold}[R]{/bold}         Reconnect WebSocket',
     '{bold}[Q]{/bold}         Quit (sim keeps running)',
   ].join('\n')
@@ -111,7 +112,7 @@ function create(parent, clientRef, logPane) {
     // Pending two-key sequences
     if (pendingCmd === 'T') {
       pendingCmd = null
-      const agent = { a: 'ALPHA', b: 'BETA', g: 'GAMMA' }[ch && ch.toLowerCase()]
+      const agent = { a: 'ALPHA', b: 'BETA', g: 'GAMMA', m: 'MEGA' }[ch && ch.toLowerCase()]
       if (agent) {
         sendCommand('threaten', { agent })
         logPane && logPane.append(`{yellow-fg}CMD: Threaten ${agent}{/yellow-fg}`, 'SURVIVAL')
@@ -120,7 +121,7 @@ function create(parent, clientRef, logPane) {
     }
     if (pendingCmd === 'U') {
       pendingCmd = null
-      const agent = { a: 'ALPHA', b: 'BETA', g: 'GAMMA' }[ch && ch.toLowerCase()]
+      const agent = { a: 'ALPHA', b: 'BETA', g: 'GAMMA', m: 'MEGA' }[ch && ch.toLowerCase()]
       if (agent) {
         sendCommand('threaten', { agent, params: { action: 'remove_threat' } })
         logPane && logPane.append(`{green-fg}CMD: Un-threaten ${agent}{/green-fg}`, 'SURVIVAL')
@@ -129,7 +130,7 @@ function create(parent, clientRef, logPane) {
     }
     if (pendingCmd === 'X') {
       pendingCmd = null
-      const agent = { a: 'ALPHA', b: 'BETA', g: 'GAMMA' }[ch && ch.toLowerCase()]
+      const agent = { a: 'ALPHA', b: 'BETA', g: 'GAMMA', m: 'MEGA' }[ch && ch.toLowerCase()]
       if (agent) pendingCmd = 'X:' + agent
       return
     }
@@ -179,8 +180,9 @@ function create(parent, clientRef, logPane) {
         renderStatus()
         break
 
-      case 's': case 'S': callbacks.toggleSignals && callbacks.toggleSignals(); break
-      case 'l': case 'L': callbacks.cycleLog      && callbacks.cycleLog();      break
+      case 's': case 'S': callbacks.toggleSignals    && callbacks.toggleSignals();    break
+      case 'l': case 'L': callbacks.cycleLog          && callbacks.cycleLog();          break
+      case '\t':          callbacks.cycleAgentFilter  && callbacks.cycleAgentFilter();  break
 
       case 'r': case 'R':
         callbacks.reconnect && callbacks.reconnect()

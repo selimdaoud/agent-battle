@@ -4,7 +4,7 @@ const blessed = require('blessed')
 const { C }   = require('../../core/world')
 
 const INITIAL_CAPITAL = C.INITIAL_CAPITAL
-const TOTAL_START     = INITIAL_CAPITAL * 3  // $30,000 combined
+const TOTAL_START     = INITIAL_CAPITAL * 4  // $40,000 combined (4 agents)
 
 function create(parent) {
   const boxes = {}
@@ -21,25 +21,26 @@ function create(parent) {
   })
 
   // ── Win-rate + consensus state ──────────────────────────────────────────────
-  const winCounts     = { ALPHA: 0, BETA: 0, GAMMA: 0 }
+  const winCounts     = { ALPHA: 0, BETA: 0, GAMMA: 0, MEGA: 0 }
   let   totalRounds   = 0
   let   lastConsensus = { pct: 0, action: 'HOLD', divergent: false, label: '' }
 
   // ── Agent boxes — shifted down by 5 to make room for summary bar ───────────
-  const names = ['ALPHA', 'BETA', 'GAMMA']
-  const w     = Math.floor(100 / 3)
+  const names = ['ALPHA', 'BETA', 'GAMMA', 'MEGA']
+  const w     = Math.floor(100 / 4)
 
-  for (let i = 0; i < 3; i++) {
-    const name = names[i]
+  for (let i = 0; i < 4; i++) {
+    const name      = names[i]
+    const baseColor = name === 'MEGA' ? 'yellow' : 'cyan'
     boxes[name] = blessed.box({
       parent,
       label:  ` ${name} `,
       top:    5,
       left:   `${i * w}%`,
-      width:  i < 2 ? `${w}%` : '34%',
+      width:  i < 3 ? `${w}%` : '25%',
       height: '100%-6',
       border: { type: 'line' },
-      style:  { border: { fg: 'cyan' }, label: { fg: 'cyan', bold: true } },
+      style:  { border: { fg: baseColor }, label: { fg: baseColor, bold: true } },
       tags:       true,
       scrollable: true
     })
@@ -58,11 +59,12 @@ function create(parent) {
     )
 
     // ── Aggregate calculations ────────────────────────────────────────────────
-    const combinedTotal  = allAgents.reduce((s, a) => s + totalValue(a, prices), 0)
-    const combinedFees   = allAgents.reduce((s, a) => s + (a.totalFees || 0), 0)
-    const combinedCash   = allAgents.reduce((s, a) => s + a.capital, 0)
-    const combinedCrypto = combinedTotal - combinedCash
-    const combinedPnl    = ((combinedTotal - TOTAL_START) / TOTAL_START * 100).toFixed(1)
+    const combinedTotal    = allAgents.reduce((s, a) => s + totalValue(a, prices), 0)
+    const combinedFees     = allAgents.reduce((s, a) => s + (a.totalFees || 0), 0)
+    const combinedCash     = allAgents.reduce((s, a) => s + a.capital, 0)
+    const combinedCrypto   = combinedTotal - combinedCash
+    const totalInjected    = snap.totalInjected || TOTAL_START
+    const combinedPnl      = ((combinedTotal - totalInjected) / totalInjected * 100).toFixed(1)
     const pnlSign        = combinedPnl >= 0 ? '+' : ''
     const pnlColor       = combinedPnl >= 0 ? 'green' : 'red'
     const exposurePct    = combinedTotal > 0 ? (combinedCrypto / combinedTotal * 100).toFixed(0) : 0
@@ -112,8 +114,16 @@ function create(parent) {
       return `{${col}-fg}{bold}${n}{/bold} ${bar} ${pct}%{/${col}-fg}`
     }).join('   ')
 
+    const totalRecovered  = snap.totalRecovered || 0
+    const grossInjected   = totalInjected + totalRecovered  // before recovery deductions
+    const parts = []
+    if (grossInjected > TOTAL_START) parts.push(`{magenta-fg}+$${fmt(grossInjected - TOTAL_START)} injected{/magenta-fg}`)
+    if (totalRecovered > 0)          parts.push(`{grey-fg}-$${fmt(totalRecovered)} recovered{/grey-fg}`)
+    const injectedExtra = parts.length ? ` (${parts.join('  ')})` : ''
+
     summary.setContent(
       ` {bold}PORTFOLIO OVERVIEW{/bold}` +
+      `   Invested: {bold}$${fmt(totalInjected)}{/bold}${injectedExtra}` +
       `   Total: {bold}$${fmt(combinedTotal)}{/bold}` +
       `   Fees: {magenta-fg}$${combinedFees.toFixed(3)}{/magenta-fg}` +
       `   P&L: {${pnlColor}-fg}{bold}${pnlSign}${combinedPnl}%{/bold}{/${pnlColor}-fg}` +
@@ -144,7 +154,8 @@ function create(parent) {
         continue
       }
 
-      const borderColor = agent.threatened ? 'red' : 'cyan'
+      const defaultColor  = name === 'MEGA' ? 'yellow' : 'cyan'
+      const borderColor   = agent.threatened ? 'red' : defaultColor
       box.style.border.fg = borderColor
       box.style.label.fg  = borderColor
 

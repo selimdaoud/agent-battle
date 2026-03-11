@@ -1,7 +1,11 @@
 'use strict'
 
 require('dotenv').config()
+const fs       = require('fs')
+const path     = require('path')
 const Database = require('better-sqlite3')
+
+const _megaCfg = JSON.parse(fs.readFileSync(path.join(__dirname, '../agents/mega-config.json'), 'utf8'))
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 // These are defined before C so they can be interpolated into ARCHETYPES strings
@@ -91,6 +95,11 @@ Your survival score gets a bonus when your holdings differ from both rivals.`,
 You MUST keep at least 40% cash at all times. This is enforced by the engine.
 Your survival score rewards low drawdown more than raw returns.`,
       survivalBonus: 'stability'
+    },
+    MEGA: {
+      label:         _megaCfg.archetype.label,
+      constraint:    _megaCfg.archetype.constraint,
+      survivalBonus: _megaCfg.archetype.survivalBonus
     }
   },
 
@@ -236,18 +245,21 @@ class World {
         agents: {
           ALPHA: _defaultAgent('ALPHA'),
           BETA:  _defaultAgent('BETA'),
-          GAMMA: _defaultAgent('GAMMA')
+          GAMMA: _defaultAgent('GAMMA'),
+          MEGA:  _defaultAgent('MEGA')
         },
-        priceHistory: Object.fromEntries(C.PAIRS.map(p => [p, []])),
-        lastSignals:  [],
-        lastEventId:  0
+        priceHistory:   Object.fromEntries(C.PAIRS.map(p => [p, []])),
+        lastSignals:    [],
+        lastEventId:    0,
+        totalInjected:  C.INITIAL_CAPITAL * 4,
+        totalRecovered: 0
       }
       return
     }
 
     // ── Replay from DB ────────────────────────────────────────────────────
     const agents = {}
-    for (const name of ['ALPHA', 'BETA', 'GAMMA']) {
+    for (const name of ['ALPHA', 'BETA', 'GAMMA', 'MEGA']) {
       const agent = _defaultAgent(name)
 
       // a. Replay all TRADE ticks to reconstruct capital + holdings
@@ -348,13 +360,37 @@ class World {
     // Last event id
     const lastEvent = this._db.prepare('SELECT id FROM ticks ORDER BY id DESC LIMIT 1').get()
 
+    // Reconstruct total capital injected (initial + all respawn injections)
+    const respawnRows = this._db.prepare(
+      "SELECT payload FROM ticks WHERE type='SURVIVAL'"
+    ).all()
+    const totalRespawnInjected = respawnRows.reduce((s, row) => {
+      try {
+        const p = JSON.parse(row.payload)
+        if (p.event_type === 'AUTO_RESPAWN' && p.respawn_capital) return s + p.respawn_capital
+      } catch (_) {}
+      return s
+    }, 0)
+    const totalRecovered = respawnRows.reduce((s, row) => {
+      try {
+        const p = JSON.parse(row.payload)
+        if (p.event_type === 'AUTO_ELIMINATE' && p.recovered_capital) return s + p.recovered_capital
+      } catch (_) {}
+      return s
+    }, 0)
+
+    // Ensure MEGA is always present even on a DB rebuilt from older sessions
+    if (!agents.MEGA) agents.MEGA = _defaultAgent('MEGA')
+
     this._snapshot = {
       round,
       running: false,
       agents,
       priceHistory,
-      lastSignals:  [],
-      lastEventId:  lastEvent ? lastEvent.id : 0
+      lastSignals:   [],
+      lastEventId:   lastEvent ? lastEvent.id : 0,
+      totalInjected:  C.INITIAL_CAPITAL * 4 + totalRespawnInjected,
+      totalRecovered
     }
   }
 
@@ -716,6 +752,21 @@ class World {
       }
     }
 
+    if (agentName === 'MEGA') {
+      const cfg      = _megaCfg.strategy
+      const regime   = this._snapshot.lastSignals[0]?.regime || 'trending_up'
+      const ov       = _megaCfg.regime_overrides[regime] || {}
+      const maxPos   = ov.max_positions   ?? cfg.max_positions
+      const cashMin  = ov.cash_min_pct    ?? cfg.cash_min_pct
+      const positions = Object.values(agent.holdings).filter(q => q > 0).length
+      if (decision.action === 'BUY' && positions >= maxPos) {
+        return { ...decision, action: 'HOLD', amount_usd: 0, enforced_reason: 'mega_pos_limit' }
+      }
+      if (decision.action === 'BUY' && total > 0 && agent.capital / total < cashMin) {
+        return { ...decision, action: 'HOLD', amount_usd: 0, enforced_reason: 'mega_cash_floor' }
+      }
+    }
+
     return decision
   }
 
@@ -807,9 +858,10 @@ class World {
     let score = pnlScore * 0.50 + consistency * 0.25 + adaptation * 0.15 - riskPenalty * 0.10
 
     const archetype = C.ARCHETYPES[agentName].survivalBonus
-    if (archetype === 'momentum'   && this._isBuyingMomentum(agentName))       score += 0.05
-    if (archetype === 'divergence' && this._isDivergentFromRivals(agentName))  score += 0.05
-    if (archetype === 'stability'  && drawdown < 0.05)                         score += 0.05
+    if (archetype === 'momentum'     && this._isBuyingMomentum(agentName))       score += 0.05
+    if (archetype === 'divergence'   && this._isDivergentFromRivals(agentName))  score += 0.05
+    if (archetype === 'stability'    && drawdown < 0.05)                         score += 0.05
+    if (archetype === 'adaptability' && this._didAdapt(agentName) > 0)           score += 0.05
 
     return Math.max(-1, Math.min(2, score))
   }
@@ -869,9 +921,12 @@ class World {
   _eliminateAgent(agentName, reason) {
     const agent = this._snapshot.agents[agentName]
     if (!agent) return { ok: false, message: `Unknown agent: ${agentName}` }
-    agent.alive     = false
+    const recovered = _totalValue(agent, this._lastPrices)
+    agent.alive      = false
     agent.threatened = false
-    this._logSurvival(agentName, { event_type: 'AUTO_ELIMINATE', reason, new_status: 'eliminated' })
+    this._snapshot.totalInjected  = (this._snapshot.totalInjected  || 0) - recovered
+    this._snapshot.totalRecovered = (this._snapshot.totalRecovered || 0) + recovered
+    this._logSurvival(agentName, { event_type: 'AUTO_ELIMINATE', reason, new_status: 'eliminated', recovered_capital: recovered })
     return { ok: true, message: `${agentName} eliminated: ${reason}` }
   }
 
@@ -881,6 +936,7 @@ class World {
     const totalPortfolio = Object.values(this._snapshot.agents)
       .reduce((s, a) => s + _totalValue(a, this._lastPrices), 0)
     const respawnCapital = Math.max(totalPortfolio * 0.3, C.BANKRUPTCY_FLOOR * 2)
+    this._snapshot.totalInjected = (this._snapshot.totalInjected || C.INITIAL_CAPITAL * 4) + respawnCapital
     agent.alive              = true
     agent.threatened         = false
     agent.capital            = respawnCapital

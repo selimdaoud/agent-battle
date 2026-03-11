@@ -19,11 +19,11 @@ const screen = blessed.screen({
   fullUnicode: true
 })
 
-// ── Layout: 60/40 horizontal, 65/35 vertical ─────────────────────────────────
+// ── Layout: 70/30 horizontal, 65/35 vertical ─────────────────────────────────
 const topLeft = blessed.box({
   parent: screen,
   top: 0, left: 0,
-  width: '60%', height: '65%',
+  width: '70%', height: '65%',
   label: ' AGENTS ',
   border: { type: 'line' },
   style:  { border: { fg: 'cyan' }, label: { fg: 'cyan', bold: true } }
@@ -31,21 +31,73 @@ const topLeft = blessed.box({
 
 const topRight = blessed.box({
   parent: screen,
-  top: 0, left: '60%',
-  width: '40%', height: '65%'
+  top: 0, left: '70%',
+  width: '30%', height: '65%'
 })
 
 const botLeft = blessed.box({
   parent: screen,
   top: '65%', left: 0,
-  width: '60%', height: '35%'
+  width: '70%', height: '35%'
 })
 
 const botRight = blessed.box({
   parent: screen,
-  top: '65%', left: '60%',
-  width: '40%', height: '35%'
+  top: '65%', left: '70%',
+  width: '30%', height: '35%'
 })
+
+// ── Proposal overlay ──────────────────────────────────────────────────────────
+const proposalBox = blessed.box({
+  parent:  screen,
+  top:     'center',
+  left:    'center',
+  width:   '72%',
+  height:  '65%',
+  label:   ' ★ MEGA CONFIG PROPOSAL ',
+  border:  { type: 'line' },
+  style:   { border: { fg: 'yellow' }, label: { fg: 'yellow', bold: true }, bg: 'black' },
+  tags:    true,
+  hidden:  true,
+  scrollable: true,
+  alwaysScroll: true,
+  keys: true
+})
+
+function showProposal(data) {
+  const p = data.proposal
+  if (!p) return
+
+  const wrap = (text, width = 64) => {
+    const words = text.split(' ')
+    const lines = []
+    let line = ''
+    for (const word of words) {
+      if (line.length + word.length + 1 > width) { lines.push(line.trimEnd()); line = '' }
+      line += word + ' '
+    }
+    if (line.trim()) lines.push(line.trimEnd())
+    return lines.join('\n')
+  }
+
+  const deferred = p.deferred?.length
+    ? `\n{grey-fg}Deferred → ${p.deferred.map(d => d.field).join(', ')}{/grey-fg}`
+    : ''
+
+  proposalBox.setContent(
+    `{yellow-fg}{bold}Field:{/bold}{/yellow-fg}    ${p.field}\n` +
+    `{yellow-fg}{bold}Current:{/bold}{/yellow-fg}  {red-fg}${p.current}{/red-fg}   {yellow-fg}{bold}Proposed:{/bold}{/yellow-fg}  {green-fg}${p.proposed}{/green-fg}\n` +
+    `{yellow-fg}{bold}Basis:{/bold}{/yellow-fg}    ${p.confidence}\n` +
+    `\n` +
+    `{white-fg}${wrap(p.justification)}{/white-fg}` +
+    deferred +
+    `\n\n${'─'.repeat(60)}\n` +
+    `  {green-fg}{bold}[Y]{/bold}{/green-fg} Apply change    {red-fg}{bold}[N]{/bold}{/red-fg} Reject`
+  )
+  proposalBox.show()
+  proposalBox.setFront()
+  screen.render()
+}
 
 // ── Mutable WS reference — passed by object so controls always uses latest ───
 const clientRef = { current: null }
@@ -96,6 +148,35 @@ function buildHandlers() {
     },
     onError(data) {
       log.onError(data)
+    },
+    onPipeline(data) {
+      if (data.status === 'started') {
+        log.append('{cyan-fg}⟳ Session analysis running...{/cyan-fg}', 'TICK')
+      } else if (data.status === 'log') {
+        log.append(`{grey-fg}${data.message}{/grey-fg}`, 'TICK')
+      } else if (data.status === 'done') {
+        log.append(`{green-fg}✓ ${data.message}{/green-fg}`, 'TICK')
+      } else {
+        log.append(`{red-fg}✗ Analysis error: ${data.message}{/red-fg}`, 'ERROR')
+      }
+      screen.render()
+    },
+    onProposal(data) {
+      log.append('{yellow-fg}★ MEGA config proposal ready — review overlay{/yellow-fg}', 'TICK')
+      showProposal(data)
+    },
+    onLogHistory(data) {
+      const handlers = this
+      for (const ev of (data.events || [])) {
+        switch (ev.type) {
+          case 'TRADE':    log.onTrade(ev);    break
+          case 'SURVIVAL': log.onSurvival(ev); break
+          case 'WINNER':   log.append(`{bold}{green-fg}🏆 WINNER: ${ev.agent}{/green-fg}{/bold}`, 'SURVIVAL'); break
+          case 'ERROR':    log.onError(ev);    break
+          case 'PIPELINE': handlers.onPipeline(ev); break
+        }
+      }
+      screen.render()
     }
   }
 }
@@ -107,10 +188,24 @@ function connect() {
 
 // ── Keyboard input ────────────────────────────────────────────────────────────
 screen.on('keypress', (ch, key) => {
+  // Proposal overlay intercepts Y/N when visible
+  if (!proposalBox.hidden) {
+    if (ch === 'y' || ch === 'Y') {
+      clientRef.current?.send({ type: 'COMMAND', command: 'apply_change', params: { approved: true } })
+      proposalBox.hide()
+      screen.render()
+    } else if (ch === 'n' || ch === 'N') {
+      clientRef.current?.send({ type: 'COMMAND', command: 'apply_change', params: { approved: false } })
+      proposalBox.hide()
+      screen.render()
+    }
+    return
+  }
   controls.handleKey(screen, ch, key, {
-    toggleSignals: () => signals.toggleCompact(),
-    cycleLog:      () => log.cycleFilter(),
-    reconnect:     () => connect()
+    toggleSignals:   () => signals.toggleCompact(),
+    cycleLog:        () => log.cycleFilter(),
+    cycleAgentFilter:() => log.cycleAgentFilter(),
+    reconnect:       () => connect()
   })
 })
 

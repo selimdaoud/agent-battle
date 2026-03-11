@@ -1,0 +1,235 @@
+# Post-Trading Session Analysis — Sub-Project Spec
+
+## Purpose
+
+After running a trading session (24h or longer), understand *why* it went the way it did
+and extract durable, validated improvements for MEGA.
+
+**What this is not:** a system that auto-tunes MEGA's thresholds from one session's data.
+Deriving specific numeric config values from a single session is curve-fitting — the next
+session may have completely different market conditions and the tuned values will hurt.
+
+**What this is:** an automated diagnostic and validation pipeline that runs after every
+session, accumulates evidence across sessions, and surfaces proposed config changes for
+human approval. The human's only job is reviewing a proposal and saying yes or no.
+
+---
+
+## The Two Real Edges for MEGA
+
+Everything in this pipeline serves one of two goals:
+
+### 1. Regime Overrides
+ALPHA, BETA, and GAMMA use the same thresholds regardless of market regime. MEGA doesn't.
+MEGA has stricter entry requirements in ranging and volatile markets, and loosens them
+in trending markets where momentum signals are reliable.
+
+This is robust because it's not derived from one session's outcomes — it's a structural
+property of how signals behave in different regimes.
+
+```json
+"regime_overrides": {
+  "ranging":  { "buy_signal": 0.28, "buy_size_pct": 0.12 },
+  "volatile": { "buy_signal": 0.30, "cash_min_pct": 0.40 }
+}
+```
+
+### 2. Signal Weight Accumulation
+If CVD consistently predicts direction correctly across many sessions while `momentum_4h`
+is near coin-flip, reweighting toward CVD is justified. The pipeline accumulates per-signal
+accuracy across sessions and proposes weight adjustments when the trend is statistically
+clear (10+ sessions, consistent direction).
+
+---
+
+## How It Works in Practice
+
+MEGA runs as a 4th agent alongside ALPHA, BETA, GAMMA in the same engine. It reads
+`agents/mega-config.json` once at startup and trades on those thresholds for the entire
+session. Config never changes mid-session.
+
+**The cycle:**
+
+```
+node api.js
+  → MEGA loads agents/mega-config.json
+  → All 4 agents compete for 24h+
+
+Press P on the TUI to pause
+  → api.js receives the stop command and triggers the pipeline automatically
+      export-session.js
+      report-session.js
+      compare-sessions.js
+      detect-changes.js
+  → mega-changes-proposed.json is written
+
+Human reviews proposal
+  → node tools/apply-changes.js
+      shows each proposed change with justification
+      human approves or rejects each one
+  → approved changes written to mega-config.json
+
+Press P again to resume
+  → MEGA loads updated config
+```
+
+---
+
+## Automation: What Runs Without You
+
+### Trigger: pressing P on the TUI
+
+When P is pressed to pause, the TUI sends `{ command: 'stop' }` to `api.js` via
+WebSocket. `api.js` calls `engine.stop()` and immediately spawns the pipeline as a
+background process. Nothing extra to configure — the hook lives in the existing
+`stop` command handler in `api.js`:
+
+```javascript
+case 'stop':
+  engine.stop()
+  require('child_process').spawn('node', ['tools/post-session.js'], { stdio: 'inherit' })
+  return { ok: true }
+```
+
+`tools/post-session.js` chains the four scripts in sequence. The pipeline runs in the
+background while the TUI remains responsive. When the pipeline finishes, it prints
+a summary line to the terminal.
+
+---
+
+## The New Scripts
+
+### `tools/detect-changes.js`
+
+Reads all session analysis files, applies multi-session rules, and writes
+`agents/mega-changes-proposed.json`.
+
+**Rules it applies:**
+
+| Condition | Proposed change |
+|---|---|
+| MEGA's ranging win rate < 42% for 3+ consecutive sessions | Raise `regime_overrides.ranging.buy_signal` by 0.03 |
+| MEGA's volatile regime shows >8% avg drawdown for 3+ sessions | Raise `regime_overrides.volatile.cash_min_pct` by 0.05 |
+| A signal's prediction accuracy > 65% across 10+ sessions | Increase that signal's weight by 10% (renormalized) |
+| A signal's prediction accuracy < 50% across 10+ sessions | Decrease that signal's weight by 10% (renormalized) |
+| No regime shows consistent underperformance | No proposal generated |
+
+One rule fires at a time. If multiple conditions are met, the script proposes the
+highest-confidence change and defers the rest to the next session. This enforces
+one variable at a time.
+
+**Output: `agents/mega-changes-proposed.json`**
+
+```json
+{
+  "generatedAt": "2026-03-11T06:00:00Z",
+  "sessionsAnalyzed": 4,
+  "proposals": [
+    {
+      "field": "regime_overrides.ranging.buy_signal",
+      "current": 0.28,
+      "proposed": 0.31,
+      "confidence": "3 consecutive sessions, ranging win rate: 38%, 35%, 31%",
+      "justification": "MEGA's ranging-regime entries have deteriorated across 3 sessions. The current threshold of 0.28 is admitting too many low-quality signals in non-directional markets. A conservative raise to 0.31 reduces exposure without eliminating the regime entirely.",
+      "deferred": []
+    }
+  ]
+}
+```
+
+The `justification` text is written by GPT — given the trend data, it explains the
+reasoning in plain English so the human can evaluate it quickly. This is the one
+legitimate LLM role: not deriving numbers, but explaining rule-based proposals clearly.
+
+### `tools/apply-changes.js`
+
+Interactive CLI. Reads `mega-changes-proposed.json` and walks the human through each proposal:
+
+```
+Session analysis complete. 1 proposed change for MEGA.
+
+─────────────────────────────────────────────────────
+PROPOSAL: regime_overrides.ranging.buy_signal
+  Current:  0.28
+  Proposed: 0.31
+  Basis:    3 consecutive sessions, ranging win rate: 38%, 35%, 31%
+
+  "MEGA's ranging-regime entries have deteriorated across 3 sessions.
+   The current threshold of 0.28 is admitting too many low-quality
+   signals in non-directional markets..."
+
+  Apply this change? (y/n/skip-all):
+─────────────────────────────────────────────────────
+```
+
+- `y` → writes change to `mega-config.json`, logs to `change-history.json`
+- `n` → discards proposal, notes rejection in log (won't re-propose for 3 sessions)
+- `skip-all` → defer everything to next session
+
+---
+
+## The Unchanged Scripts
+
+### `tools/export-session.js`
+Reads `sim.db` → writes structured session JSON with closed trade records including
+full entry context (regime, signal score, CVD, fear/greed at decision time).
+
+### `tools/report-session.js`
+Reads session JSON → writes `session-report.md`. Human diagnostic. Not config input.
+Contains: per-agent scorecard, regime breakdown, signal accuracy table, top trades.
+
+### `tools/compare-sessions.js`
+Takes two session JSONs → diffs metrics → outputs trend data consumed by `detect-changes.js`.
+Also produces a human-readable diff showing exactly what changed and whether it helped.
+
+---
+
+## MEGA's Config: What Changes and What Doesn't
+
+### Never changed automatically:
+- Base `buy_signal`, `sell_signal` thresholds
+- `stop_loss_pct`, `take_profit_pct`
+- `buy_size_pct`, `max_positions`
+
+These are architectural decisions, not tunable parameters. Change them manually
+if the agent's fundamental behavior needs rethinking.
+
+### Eligible for automated proposals (with approval):
+- `regime_overrides` — after 3+ sessions of consistent regime underperformance
+- `signal_weights` — after 10+ sessions of consistent signal accuracy divergence
+
+---
+
+## Tooling Summary
+
+| Script | Runs | Input | Output |
+|---|---|---|---|
+| `tools/post-session.sh` | Auto on engine stop | — | Triggers pipeline |
+| `tools/export-session.js` | Auto | `sim.db` | `sessions/session-*.json` |
+| `tools/report-session.js` | Auto | session JSON | `session-report.md` |
+| `tools/compare-sessions.js` | Auto | two session JSONs | trend data |
+| `tools/detect-changes.js` | Auto | all session analyses | `mega-changes-proposed.json` |
+| `tools/apply-changes.js` | Manual | proposed JSON | updated `mega-config.json` |
+
+---
+
+## Implementation Order
+
+1. `export-session.js` — foundation, nothing else works without it
+2. `report-session.js` — immediate value after session 1
+3. `compare-sessions.js` — needed from session 2 onward
+4. MEGA's `regime_overrides` in `core/strategy.js` — the structural edge, independent of pipeline
+5. `detect-changes.js` — once you have 3+ sessions to analyze
+6. `apply-changes.js` — paired with detect, completes the approval loop
+7. `post-session.sh` — wire it all together once the scripts are stable
+
+---
+
+## The Honest Timeline
+
+| After session | What happens automatically | Human action |
+|---|---|---|
+| 1 | Export + report generated | Read the diagnostic. Nothing to change. |
+| 2 | Compare runs. No proposals yet (insufficient data). | Optional: read the diff. |
+| 3 | Detect runs. May generate first proposal if regime trend is clear. | Review and approve/reject. |
+| 10+ | Signal weight proposals become eligible. | Review and approve/reject. |
