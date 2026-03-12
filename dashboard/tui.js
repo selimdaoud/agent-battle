@@ -106,7 +106,7 @@ const clientRef = { current: null }
 const agents   = agentPane.create(topLeft)
 const signals  = signalPane.create(topRight)
 const log      = logPane.create(botLeft)
-const controls = ctrlPane.create(botRight, clientRef, log)
+const controls = ctrlPane.create(botRight, clientRef, log, screen)
 
 let lastPrices      = {}
 let pendingDecisions = []
@@ -138,6 +138,7 @@ function buildHandlers() {
     onTrade(result) {
       if (result) pendingDecisions.push(result)
       log.onTrade(result)
+      controls.onTrade(result)
     },
     onSurvival(data) {
       log.onSurvival(data)

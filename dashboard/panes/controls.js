@@ -5,35 +5,37 @@ const blessed = require('blessed')
 const INTERVALS       = [15000, 30000, 60000, 300000, 900000]
 const INTERVAL_LABELS = ['15s', '30s', '1m', '5m', '15m']
 
-function create(parent, clientRef, logPane) {
+function create(parent, clientRef, logPane, screen) {
   const box = blessed.box({
     parent,
     label:  ' CONTROLS ',
     top:    0,
     left:   0,
     width:  '100%',
-    height: '100%-1',
+    height: '100%',
     border: { type: 'line' },
     style:  { border: { fg: 'magenta' }, label: { fg: 'magenta', bold: true } },
     tags:   true
   })
 
   const statusBar = blessed.box({
-    parent,
+    parent: screen || parent,
     bottom: 0,
     left:   0,
-    width:  '100%',
+    width:  '70%',
     height: 1,
     style:  { fg: 'white', bg: 'blue' },
     tags:   true
   })
 
-  let connected    = false
-  let running      = false
-  let round        = 0
-  let intervalIdx  = 4   // default 15m
-  let nextTickSecs = 0
-  let pendingCmd   = null
+  let connected     = false
+  let running       = false
+  let round         = 0
+  let intervalIdx   = 4   // default 15m
+  let nextTickSecs  = 0
+  let pendingCmd    = null
+  let sellCounts    = { ALPHA: 0, BETA: 0, GAMMA: 0 }
+  let sessionTrades = 0
 
   const helpText = [
     '{bold}[P]{/bold}         Play / Pause',
@@ -45,6 +47,7 @@ function create(parent, clientRef, logPane) {
     '{bold}[X][A/B/G/M]{/bold}  Terminate agent',
     '  then {bold}[E]{/bold}liminate / {bold}[R]{/bold}espawn',
     '',
+    '{bold}[M]{/bold}         Force session export now',
     '{bold}[S]{/bold}         Toggle signal detail',
     '{bold}[L]{/bold}         Cycle log filter',
     '{bold}[TAB]{/bold}       Cycle agent filter A/B/G/M/All',
@@ -69,10 +72,25 @@ function create(parent, clientRef, logPane) {
       ? `{green-fg}▶ RUNNING{/green-fg}  Next: ${nextTickSecs}s`
       : '{yellow-fg}⏸ PAUSED  [P] to start{/yellow-fg}'
 
+    let tradesStr = ''
+    if (sessionTrades > 0) {
+      const a = sellCounts.ALPHA || 0
+      const b = sellCounts.BETA  || 0
+      const g = sellCounts.GAMMA || 0
+      const n = sessionTrades
+      const fmt = (v) => v >= n ? `{green-fg}${v}/${n}{/green-fg}` : `${v}/${n}`
+      tradesStr = `   Trades: A:${fmt(a)} B:${fmt(b)} G:${fmt(g)}`
+    }
     statusBar.setContent(
-      `  ${connStr}   ${runStr}   Round: ${round}   Interval: ${INTERVAL_LABELS[intervalIdx]}`
+      `  ${connStr}   ${runStr}   Round: ${round}   Interval: ${INTERVAL_LABELS[intervalIdx]}${tradesStr}`
     )
     parent.screen.render()
+  }
+
+  function onTrade(result) {
+    if (result && result.sellCounts)    sellCounts    = result.sellCounts
+    if (result && result.sessionTrades) sessionTrades = result.sessionTrades
+    renderStatus()
   }
 
   function onConnect() {
@@ -96,6 +114,8 @@ function create(parent, clientRef, logPane) {
     nextTickSecs = snap.nextTickAt
       ? Math.max(0, Math.round((snap.nextTickAt - Date.now()) / 1000))
       : INTERVALS[intervalIdx] / 1000
+    if (snap.sellCounts)    sellCounts    = snap.sellCounts
+    if (snap.sessionTrades) sessionTrades = snap.sessionTrades
     renderStatus()
   }
 
@@ -180,6 +200,11 @@ function create(parent, clientRef, logPane) {
         renderStatus()
         break
 
+      case 'm': case 'M':
+        sendCommand('run_pipeline')
+        logPane && logPane.append('{cyan-fg}CMD: Force export → running session analysis...{/cyan-fg}', 'TICK')
+        break
+
       case 's': case 'S': callbacks.toggleSignals    && callbacks.toggleSignals();    break
       case 'l': case 'L': callbacks.cycleLog          && callbacks.cycleLog();          break
       case '\t':          callbacks.cycleAgentFilter  && callbacks.cycleAgentFilter();  break
@@ -198,7 +223,7 @@ function create(parent, clientRef, logPane) {
 
   renderStatus()
 
-  return { onConnect, onDisconnect, onTick, handleKey }
+  return { onConnect, onDisconnect, onTick, onTrade, handleKey }
 }
 
 module.exports = { create }

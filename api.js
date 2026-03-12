@@ -8,7 +8,8 @@ const fs                  = require('fs')
 const path                = require('path')
 const engine              = require('./engine')
 
-const DEBUG = process.env.DEBUG === '1' || process.env.DEBUG === 'true'
+const DEBUG         = process.env.DEBUG === '1' || process.env.DEBUG === 'true'
+const SESSION_TRADES = parseInt(process.env.SESSION_TRADES) || 0
 const log   = (...args) => console.log(new Date().toISOString(), ...args)
 const dbg   = (...args) => { if (DEBUG) console.log('[DBG]', new Date().toISOString(), ...args) }
 
@@ -26,6 +27,25 @@ const MAX_LOG     = 500
 const LOG_TYPES   = new Set(['TRADE', 'SURVIVAL', 'WINNER', 'ERROR', 'PIPELINE'])
 
 let eventLog = []
+let pipelineRunning = false
+const sellCounts = { ALPHA: 0, BETA: 0, GAMMA: 0 }
+
+function _initSellCounts() {
+  if (!SESSION_TRADES) return
+  try {
+    const Database = require('better-sqlite3')
+    const dbPath   = require('path').join(__dirname, 'data/sim.db')
+    if (!require('fs').existsSync(dbPath)) return
+    const db   = new Database(dbPath, { readonly: true })
+    const rows = db.prepare(
+      "SELECT agent, COUNT(*) as cnt FROM ticks WHERE type='TRADE' AND agent IN ('ALPHA','BETA','GAMMA') AND json_extract(payload,'$.action')='SELL' GROUP BY agent"
+    ).all()
+    db.close()
+    for (const r of rows) if (r.agent in sellCounts) sellCounts[r.agent] = r.cnt
+    log(`[PIPELINE] Sell counts loaded from DB: A=${sellCounts.ALPHA} B=${sellCounts.BETA} G=${sellCounts.GAMMA}`)
+  } catch (e) { log(`[PIPELINE] Could not init sell counts: ${e.message}`) }
+}
+_initSellCounts()
 
 function _loadEventLog() {
   if (!fs.existsSync(LOG_FILE)) return
@@ -59,7 +79,7 @@ function broadcast(msg) {
 engine.emitter.on('tick', snap => {
   const intervalMs = engine.getIntervalMs()
   const lastTickAt = engine.getLastTickAt()
-  broadcast({ type: 'TICK', ...snap, intervalMs, nextTickAt: lastTickAt ? lastTickAt + intervalMs : null })
+  broadcast({ type: 'TICK', ...snap, intervalMs, nextTickAt: lastTickAt ? lastTickAt + intervalMs : null, sellCounts: { ...sellCounts }, sessionTrades: SESSION_TRADES })
 
   const agents = Object.values(snap.agents)
     .map(a => `${a.name} $${Math.round(a.capital)} pos:${Object.keys(a.holdings).length} score:${a.survivalScore.toFixed(3)}`)
@@ -84,7 +104,6 @@ engine.emitter.on('tick', snap => {
 })
 
 engine.emitter.on('trade', result => {
-  broadcast({ type: 'TRADE', ...result })
   if (!result) return
   const { trade, decision } = result
   if (trade) {
@@ -92,12 +111,29 @@ engine.emitter.on('trade', result => {
     if (decision && decision.enforced_reason) {
       log(`[TRADE]   ↳ enforced: ${decision.enforced_reason}`)
     }
+    // Track SELL counts for auto-export threshold (increment before broadcast so TUI gets updated counts)
+    if (trade.action === 'SELL' && result.agent in sellCounts && SESSION_TRADES > 0 && !pipelineRunning) {
+      sellCounts[result.agent]++
+      log(`[PIPELINE] Sell counts: A=${sellCounts.ALPHA} B=${sellCounts.BETA} G=${sellCounts.GAMMA} / ${SESSION_TRADES}`)
+      const allReached = Object.values(sellCounts).every(n => n >= SESSION_TRADES)
+      if (allReached) {
+        pipelineRunning = true
+        engine.stop()
+        broadcast({ type: 'PIPELINE', status: 'started', message: `All agents reached ${SESSION_TRADES} trades — running session analysis...` })
+        _runPostSession(() => {
+          sellCounts.ALPHA = 0; sellCounts.BETA = 0; sellCounts.GAMMA = 0
+          pipelineRunning = false
+          engine.start()
+        })
+      }
+    }
   } else {
     dbg(`[TRADE] ${result.agent || '?'} HOLD (no trade executed)`)
   }
   if (DEBUG && decision) {
     dbg(`  reasoning: ${(decision.reasoning || '').slice(0, 120)}`)
   }
+  broadcast({ type: 'TRADE', ...result, sellCounts: { ...sellCounts }, sessionTrades: SESSION_TRADES })
 })
 
 engine.emitter.on('winner', name => {
@@ -153,10 +189,28 @@ function handleCommand(msg) {
     case 'start':        engine.start();                      return { ok: true }
     case 'stop':
       engine.stop()
-      broadcast({ type: 'PIPELINE', status: 'started', message: 'Session analysis running...' })
-      _runPostSession()
+      if (fs.existsSync(PROPOSED_FILE)) {
+        try {
+          const proposed = JSON.parse(fs.readFileSync(PROPOSED_FILE, 'utf8'))
+          if (proposed.proposals?.length) {
+            broadcast({ type: 'PROPOSAL', proposal: proposed.proposals[0], sessionsAnalyzed: proposed.sessionsAnalyzed })
+          }
+        } catch (_) {}
+      }
       return { ok: true }
     case 'tick':         engine.runTick();                    return { ok: true }
+    case 'run_pipeline':
+      if (!pipelineRunning) {
+        pipelineRunning = true
+        engine.stop()
+        broadcast({ type: 'PIPELINE', status: 'started', message: 'Forced export — running session analysis...' })
+        _runPostSession(() => {
+          sellCounts.ALPHA = 0; sellCounts.BETA = 0; sellCounts.GAMMA = 0
+          pipelineRunning = false
+          engine.start()
+        })
+      }
+      return { ok: true }
     case 'set_interval': engine.setInterval_(msg.params.ms); return { ok: true }
     case 'apply_change': return _applyMegaChange(msg.params?.approved)
     default:
@@ -169,7 +223,7 @@ const PROPOSED_FILE = path.join(__dirname, 'agents/mega-changes-proposed.json')
 const CONFIG_FILE   = path.join(__dirname, 'agents/mega-config.json')
 const HISTORY_FILE  = path.join(__dirname, 'sessions/change-history.json')
 
-function _runPostSession() {
+function _runPostSession(onDone) {
   const { spawn } = require('child_process')
   const child     = spawn(process.execPath, [path.join(__dirname, 'tools/post-session.js')], {
     stdio: ['ignore', 'pipe', 'pipe']
@@ -184,16 +238,7 @@ function _runPostSession() {
     broadcast({ type: 'PIPELINE', status: code === 0 ? 'done' : 'error', message: summary })
     log(`[PIPELINE] ${summary}`)
 
-    // If a proposal was written, broadcast it so the TUI can display it
-    if (code === 0 && fs.existsSync(PROPOSED_FILE)) {
-      try {
-        const proposed = JSON.parse(fs.readFileSync(PROPOSED_FILE, 'utf8'))
-        if (proposed.proposals?.length) {
-          broadcast({ type: 'PROPOSAL', proposal: proposed.proposals[0], sessionsAnalyzed: proposed.sessionsAnalyzed })
-          log('[PIPELINE] Proposal broadcast to TUI')
-        }
-      } catch (_) {}
-    }
+    if (onDone) onDone()
   })
 }
 
@@ -233,6 +278,13 @@ function _applyMegaChange(approved) {
     megaCfg.meta.version     = (megaCfg.meta.version || 1) + 1
     megaCfg.meta.lastUpdated = new Date().toISOString()
     megaCfg.meta.note        = `Updated after session ${proposed.sessionsAnalyzed} — ${p.field}: ${p.current} → ${p.proposed}`
+    // Append a learning note to threat_playbook (max 6 entries)
+    if (Array.isArray(megaCfg.threat_playbook)) {
+      megaCfg.threat_playbook.push(
+        `[v${megaCfg.meta.version}] After ${proposed.sessionsAnalyzed} sessions: ${p.field} adjusted ${p.current} → ${p.proposed}. Basis: ${p.confidence}.`
+      )
+      if (megaCfg.threat_playbook.length > 6) megaCfg.threat_playbook = megaCfg.threat_playbook.slice(-6)
+    }
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(megaCfg, null, 2))
     history.applied.push({ sessionIndex: proposed.sessionsAnalyzed, appliedAt: new Date().toISOString(), field: p.field, from: p.current, to: p.proposed, basis: p.confidence })
     const msg = `MEGA config updated (v${megaCfg.meta.version}): ${p.field} ${p.current} → ${p.proposed}`

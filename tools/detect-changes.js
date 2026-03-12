@@ -7,10 +7,11 @@
  * agents/mega-changes-proposed.json when a change is warranted.
  *
  * Rules:
- *   - MEGA regime win rate < 42% for 3+ consecutive sessions → raise that regime's buy_signal
- *   - MEGA regime win rate > 65% for 3+ consecutive sessions → lower that regime's buy_signal
- *   - Signal accuracy > 65% for 10+ sessions consistently   → raise that signal's weight
- *   - Signal accuracy < 50% for 10+ sessions consistently   → lower that signal's weight
+ *   1. MEGA regime win rate < 42% for 3+ sessions         → raise regime buy_signal
+ *   2. MEGA regime avg PnL < -0.15% for 3+ sessions       → raise regime buy_signal (expectancy)
+ *   3. Peer agent consistently beats MEGA by 0.5%+ PnL    → raise regime buy_signal (peer learning)
+ *   4. Signal accuracy > 65% for 5+ sessions              → upweight signal
+ *   5. Signal accuracy < 50% for 5+ sessions              → downweight signal
  *
  * Only ONE proposal is written at a time (highest confidence first).
  * Rejected proposals are suppressed for REJECT_COOLDOWN sessions.
@@ -27,15 +28,17 @@ const configFile   = path.join(__dirname, '../agents/mega-config.json')
 const proposedFile = path.join(__dirname, '../agents/mega-changes-proposed.json')
 const historyFile  = path.join(sessionDir, 'change-history.json')
 
-const REJECT_COOLDOWN       = 3   // sessions before a rejected proposal can re-surface
-const REGIME_SESSIONS_MIN   = 3   // consecutive sessions needed for regime rule
-const SIGNAL_SESSIONS_MIN   = 10  // sessions needed for signal weight rule
-const REGIME_LOW_THRESHOLD  = 42  // win rate below this → tighten
-const REGIME_HIGH_THRESHOLD = 65  // win rate above this → loosen (not implemented yet, future)
-const SIGNAL_HIGH_THRESHOLD = 65  // accuracy above this → upweight
-const SIGNAL_LOW_THRESHOLD  = 50  // accuracy below this → downweight
-const REGIME_STEP           = 0.03  // how much to change buy_signal per proposal
-const SIGNAL_STEP           = 0.10  // relative weight change (10%)
+const REJECT_COOLDOWN         = 3     // sessions before a rejected proposal can re-surface
+const REGIME_SESSIONS_MIN     = 3     // consecutive sessions needed for regime rule
+const SIGNAL_SESSIONS_MIN     = 5     // sessions needed for signal weight rule (was 10)
+const REGIME_LOW_THRESHOLD    = 42    // win rate below this → tighten
+const SIGNAL_HIGH_THRESHOLD   = 65    // accuracy above this → upweight
+const SIGNAL_LOW_THRESHOLD    = 50    // accuracy below this → downweight
+const REGIME_STEP             = 0.03  // how much to change buy_signal per proposal
+const SIGNAL_STEP             = 0.10  // relative weight change (10%)
+const EXPECTANCY_LOW          = -0.15 // avg PnL% below this → tighten (rule 2)
+const PEER_GAP_THRESHOLD      = 0.5   // peer must beat MEGA by this avg PnL% (rule 3)
+const PEERS                   = ['ALPHA', 'BETA', 'GAMMA']
 
 // ── Load files ────────────────────────────────────────────────────────────────
 if (!fs.existsSync(trendsFile)) {
@@ -64,6 +67,9 @@ function last(arr, n) { return arr.slice(-n) }
 /** Check if all values in array satisfy predicate */
 function allMatch(arr, fn) { return arr.length > 0 && arr.every(fn) }
 
+/** Arithmetic mean */
+function mean(arr) { return arr.reduce((s, v) => s + v, 0) / arr.length }
+
 /** How many sessions ago was this proposal last rejected? */
 function rejectedRecently(field) {
   const recent = history.rejected
@@ -73,47 +79,81 @@ function rejectedRecently(field) {
   return (sessionCount - recent[0].sessionIndex) < REJECT_COOLDOWN
 }
 
+/** Shared helper: build a regime buy_signal candidate */
+function regimeCandidate(regime, confidence, basis, justification) {
+  const field           = `regime_overrides.${regime}.buy_signal`
+  if (rejectedRecently(field)) return null
+  const currentOverride = megaCfg.regime_overrides?.[regime]?.buy_signal
+  const current         = currentOverride ?? megaCfg.strategy.buy_signal
+  if (current >= 0.50) return null
+  const proposed        = parseFloat((current + REGIME_STEP).toFixed(3))
+  return { confidence, field, current, proposed, basis, justification: justification(current, proposed) }
+}
+
 // ── Collect candidates ────────────────────────────────────────────────────────
 const candidates = []
 
 // ── Rule 1: MEGA regime win rate too low ──────────────────────────────────────
-const megaRegimes = trends.agentRegimeWinRates?.MEGA || {}
-for (const [regime, winRates] of Object.entries(megaRegimes)) {
+const megaWinRates = trends.agentRegimeWinRates?.MEGA || {}
+for (const [regime, winRates] of Object.entries(megaWinRates)) {
   if (winRates.length < REGIME_SESSIONS_MIN) continue
-
   const recent = last(winRates, REGIME_SESSIONS_MIN)
-  if (!allMatch(recent, v => v < REGIME_LOW_THRESHOLD)) continue
-
-  const field     = `regime_overrides.${regime}.buy_signal`
-  if (rejectedRecently(field)) continue
-
-  const currentOverride = megaCfg.regime_overrides?.[regime]?.buy_signal
-  const currentBase     = megaCfg.strategy.buy_signal
-  const current         = currentOverride ?? currentBase
-  const proposed        = parseFloat((current + REGIME_STEP).toFixed(3))
-
-  // Don't keep raising past 0.50
-  if (current >= 0.50) continue
-
+  if (mean(recent) >= REGIME_LOW_THRESHOLD) continue
   const trendStr = recent.map(v => `${v.toFixed(0)}%`).join(', ')
-
-  candidates.push({
-    confidence: REGIME_SESSIONS_MIN,
-    field,
-    current,
-    proposed,
-    basis: `${REGIME_SESSIONS_MIN} consecutive sessions — MEGA ${regime}-regime win rate: ${trendStr}`,
-    justification:
-      `MEGA's ${regime}-regime entries have underperformed for ${REGIME_SESSIONS_MIN} consecutive sessions ` +
-      `(win rate: ${trendStr}, all below ${REGIME_LOW_THRESHOLD}%). ` +
-      `The current entry threshold of ${current.toFixed(3)} is admitting too many low-quality signals ` +
-      `in ${regime} conditions. A conservative raise to ${proposed.toFixed(3)} reduces exposure ` +
-      `without eliminating the regime entirely. Revert if the next session shows win rate drops further ` +
-      `(may indicate the market is structural, not threshold-related).`
-  })
+  const avg = mean(recent).toFixed(1)
+  const c = regimeCandidate(regime, REGIME_SESSIONS_MIN,
+    `${REGIME_SESSIONS_MIN} sessions — MEGA ${regime} avg win rate: ${avg}%`,
+    (cur, prop) =>
+      `MEGA's ${regime}-regime average win rate is ${avg}% over the last ${REGIME_SESSIONS_MIN} sessions (${trendStr}), below the ${REGIME_LOW_THRESHOLD}% threshold. ` +
+      `Entry threshold ${cur.toFixed(3)} is admitting too many low-quality signals. Raising to ${prop.toFixed(3)} should filter for higher-conviction entries.`)
+  if (c) candidates.push(c)
 }
 
-// ── Rule 2: Signal accuracy persistently below threshold ─────────────────────
+// ── Rule 2: MEGA regime expectancy persistently negative ──────────────────────
+const megaAvgPnl = trends.agentRegimeAvgPnl?.MEGA || {}
+for (const [regime, avgPnls] of Object.entries(megaAvgPnl)) {
+  if (avgPnls.length < REGIME_SESSIONS_MIN) continue
+  const recent = last(avgPnls, REGIME_SESSIONS_MIN)
+  if (mean(recent) >= EXPECTANCY_LOW) continue
+  const trendStr = recent.map(v => `${v.toFixed(2)}%`).join(', ')
+  const avg = mean(recent).toFixed(3)
+  const c = regimeCandidate(regime, REGIME_SESSIONS_MIN + 1,
+    `${REGIME_SESSIONS_MIN} sessions — MEGA ${regime} avg PnL: ${avg}%`,
+    (cur, prop) =>
+      `MEGA's ${regime}-regime average PnL is ${avg}% over the last ${REGIME_SESSIONS_MIN} sessions ` +
+      `(${trendStr}), below the ${EXPECTANCY_LOW}% threshold. Even when winning, gains are not offsetting losses. ` +
+      `Raising the entry threshold to ${prop.toFixed(3)} should concentrate exposure in higher-quality setups.`)
+  if (c) candidates.push(c)
+}
+
+// ── Rule 3: Peer agent consistently outperforms MEGA ─────────────────────────
+for (const [regime, megaPnls] of Object.entries(megaAvgPnl)) {
+  if (megaPnls.length < REGIME_SESSIONS_MIN) continue
+  const megaRecent = last(megaPnls, REGIME_SESSIONS_MIN)
+  const megaMean   = mean(megaRecent)
+
+  let bestPeer = null, bestMean = -Infinity
+  for (const peer of PEERS) {
+    const peerPnls = trends.agentRegimeAvgPnl?.[peer]?.[regime]
+    if (!peerPnls || peerPnls.length < REGIME_SESSIONS_MIN) continue
+    const peerRecent = last(peerPnls, REGIME_SESSIONS_MIN)
+    const m = mean(peerRecent)
+    if (m > bestMean) { bestMean = m; bestPeer = peer }
+  }
+  if (!bestPeer) continue
+  const gap = bestMean - megaMean
+  if (gap < PEER_GAP_THRESHOLD) continue
+
+  const c = regimeCandidate(regime, REGIME_SESSIONS_MIN + 2,
+    `${REGIME_SESSIONS_MIN} sessions — ${bestPeer} beats MEGA by +${gap.toFixed(2)}% avg PnL in ${regime}`,
+    (cur, prop) =>
+      `${bestPeer} has outperformed MEGA in every ${regime} session for the last ${REGIME_SESSIONS_MIN} sessions ` +
+      `(gap: +${gap.toFixed(2)}% avg PnL per trade). ${bestPeer} appears better calibrated for ${regime} conditions. ` +
+      `Raising MEGA's entry threshold to ${prop.toFixed(3)} should improve selectivity and close the performance gap.`)
+  if (c) candidates.push(c)
+}
+
+// ── Rules 4 & 5: Signal accuracy persistently high/low ───────────────────────
 if (sessionCount >= SIGNAL_SESSIONS_MIN) {
   const weights = { ...megaCfg.signal_weights }
 

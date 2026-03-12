@@ -63,11 +63,14 @@ function create(parent) {
     const combinedFees     = allAgents.reduce((s, a) => s + (a.totalFees || 0), 0)
     const combinedCash     = allAgents.reduce((s, a) => s + a.capital, 0)
     const combinedCrypto   = combinedTotal - combinedCash
-    const totalInjected    = snap.totalInjected || TOTAL_START
-    const combinedPnl      = ((combinedTotal - totalInjected) / totalInjected * 100).toFixed(1)
-    const pnlSign        = combinedPnl >= 0 ? '+' : ''
-    const pnlColor       = combinedPnl >= 0 ? 'green' : 'red'
-    const exposurePct    = combinedTotal > 0 ? (combinedCrypto / combinedTotal * 100).toFixed(0) : 0
+    const totalRecovered   = snap.totalRecovered || 0
+    const atRisk           = snap.totalInjected || TOTAL_START          // currently deployed (shrinks on elimination)
+    const totalCommitted   = atRisk + totalRecovered                    // ever committed — never decreases, P&L base
+    const pnlAmt           = combinedTotal - totalCommitted
+    const pnlPct           = (pnlAmt / totalCommitted * 100).toFixed(1)
+    const pnlSign          = pnlAmt >= 0 ? '+' : ''
+    const pnlColor         = pnlAmt >= 0 ? 'green' : 'red'
+    const exposurePct      = combinedTotal > 0 ? (combinedCrypto / combinedTotal * 100).toFixed(0) : 0
 
     // Leader + win tracking
     const leader = ranked[0]
@@ -114,19 +117,17 @@ function create(parent) {
       return `{${col}-fg}{bold}${n}{/bold} ${bar} ${pct}%{/${col}-fg}`
     }).join('   ')
 
-    const totalRecovered  = snap.totalRecovered || 0
-    const grossInjected   = totalInjected + totalRecovered  // before recovery deductions
-    const parts = []
-    if (grossInjected > TOTAL_START) parts.push(`{magenta-fg}+$${fmt(grossInjected - TOTAL_START)} injected{/magenta-fg}`)
-    if (totalRecovered > 0)          parts.push(`{grey-fg}-$${fmt(totalRecovered)} recovered{/grey-fg}`)
-    const injectedExtra = parts.length ? ` (${parts.join('  ')})` : ''
+    const respawnExtra = totalCommitted > TOTAL_START
+      ? ` {magenta-fg}(+$${fmt(totalCommitted - TOTAL_START)} respawns){/magenta-fg}` : ''
+    const recoveredExtra = totalRecovered > 0
+      ? `   At Risk: {bold}$${fmt(atRisk)}{/bold}  {grey-fg}$${fmt(totalRecovered)} returned{/grey-fg}` : ''
 
     summary.setContent(
       ` {bold}PORTFOLIO OVERVIEW{/bold}` +
-      `   Invested: {bold}$${fmt(totalInjected)}{/bold}${injectedExtra}` +
-      `   Total: {bold}$${fmt(combinedTotal)}{/bold}` +
+      `   Committed: {bold}$${fmt(totalCommitted)}{/bold}${respawnExtra}${recoveredExtra}` +
+      `   Value: {bold}$${fmt(combinedTotal)}{/bold}` +
+      `   P&L: {${pnlColor}-fg}{bold}${pnlSign}$${fmt(pnlAmt)} (${pnlSign}${pnlPct}%){/bold}{/${pnlColor}-fg}` +
       `   Fees: {magenta-fg}$${combinedFees.toFixed(3)}{/magenta-fg}` +
-      `   P&L: {${pnlColor}-fg}{bold}${pnlSign}${combinedPnl}%{/bold}{/${pnlColor}-fg}` +
       `   Cash: {bold}$${fmt(combinedCash)}{/bold}` +
       `   Crypto: {bold}$${fmt(combinedCrypto)}{/bold}` +
       `   Exposure: {bold}${exposurePct}%{/bold}` +

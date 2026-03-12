@@ -212,7 +212,12 @@ const firstTick = allTicks[0]
 const lastTick  = allTicks[allTicks.length - 1]
 const startTs   = firstTick?.ts || Date.now()
 const endTs     = lastTick?.ts  || Date.now()
-const sessionId = `session-${new Date(startTs).toISOString().replace(/[:.]/g, '-').slice(0, 19)}`
+function localISOString(ts) {
+  const d = new Date(ts)
+  const pad = n => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`
+}
+const sessionId = `session-${localISOString(startTs)}`
 
 const session = {
   meta: {

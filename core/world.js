@@ -789,30 +789,34 @@ class World {
   _runSurvivalChecks(round) {
     const alive = Object.values(this._snapshot.agents).filter(a => a.alive)
 
-    // Rule 1 — Bankruptcy
+    // Rule 1 — Bankruptcy (MEGA is exempt — user controls its fate)
     for (const agent of alive) {
+      if (agent.name === 'MEGA') continue
       if (_totalValue(agent, this._lastPrices) < C.BANKRUPTCY_FLOOR) {
         this._respawnAgent(agent.name, 'bankruptcy')
       }
     }
 
-    // Rule 2 — Periodic cull
+    // Rule 2 — Periodic cull (MEGA is exempt — user controls its fate)
     if (round > 0 && round % C.CULL_EVERY_N_ROUNDS === 0) {
-      const ranked = [...alive].sort((a, b) => a.survivalScore - b.survivalScore)
-      const last   = ranked[0]
-      last.consecutiveLastPlace++
-      if (last.consecutiveLastPlace >= C.LAST_PLACE_CULL_THRESHOLD) {
-        this._eliminateAgent(last.name, 'persistent_last_place')
-      } else {
-        this._threatenAgent(last.name, 'last_place')
+      const ranked = [...alive].filter(a => a.name !== 'MEGA').sort((a, b) => a.survivalScore - b.survivalScore)
+      if (ranked.length > 0) {
+        const last = ranked[0]
+        last.consecutiveLastPlace++
+        if (last.consecutiveLastPlace >= C.LAST_PLACE_CULL_THRESHOLD) {
+          this._eliminateAgent(last.name, 'persistent_last_place')
+        } else {
+          this._threatenAgent(last.name, 'last_place')
+        }
       }
     }
 
-    // Rule 3 — Underperformance gap (after round 20)
+    // Rule 3 — Underperformance gap (after round 20; MEGA is exempt — user controls its fate)
     if (round >= C.UNDERPERFORM_MIN_ROUND) {
       const aliveNow = Object.values(this._snapshot.agents).filter(a => a.alive)
       const maxVal   = Math.max(...aliveNow.map(a => _totalValue(a, this._lastPrices)))
       for (const agent of aliveNow) {
+        if (agent.name === 'MEGA') continue
         if (_totalValue(agent, this._lastPrices) < maxVal * (1 - C.UNDERPERFORM_GAP_PCT)) {
           if (!agent.threatened) this._threatenAgent(agent.name, 'underperformance_gap')
         }
