@@ -1,6 +1,6 @@
 'use strict'
 
-const VERSION = '1.0.0'
+const VERSION = '1.0.1'
 
 require('dotenv').config()
 const EventEmitter = require('events')
@@ -126,9 +126,9 @@ const world   = new World('./data/sim.db')
 const openai  = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 const emitter = new EventEmitter()
 
-// Warm up price history in the background — completes well before the user
-// starts the simulation (which requires a manual command or keypress).
-_warmHistory(world).catch(() => {})
+// Warm up price history — awaited before the first tick fires so signals are
+// never computed against empty/flat history.
+const _warmupReady = _warmHistory(world).catch(() => {})
 
 let timer      = null
 let busy       = false
@@ -157,6 +157,7 @@ async function runTick() {
   busy = true
   lastTickAt = Date.now()
   try {
+    await _warmupReady  // no-op after first tick; ensures history is seeded before signals run
     await tick(world, openai, emitter)
   } catch (err) {
     emitter.emit('error', err.message)

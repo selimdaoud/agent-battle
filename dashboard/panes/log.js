@@ -1,6 +1,6 @@
 'use strict'
 
-const VERSION = '1.0.0'
+const VERSION = '1.0.1'
 
 const blessed = require('blessed')
 
@@ -61,7 +61,7 @@ function create(parent) {
                     ` $${Math.round(trade.proceeds_or_cost).toLocaleString()}` +
                     ` @ $${trade.price?.toLocaleString()}{/green-fg}${feeStr}${enforced}`
       if (decision && decision.reasoning) {
-        append(`  {cyan-fg}↳ ${decision.reasoning}{/cyan-fg}`, 'TRADE', agent)
+        append(`  {cyan-fg}↳ ${decision.reasoning}{/cyan-fg}`, 'TRADE', agent, true)
       }
       append(label, 'TRADE', agent)
     } else if (decision) {

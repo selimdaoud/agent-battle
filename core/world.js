@@ -1,6 +1,6 @@
 'use strict'
 
-const VERSION = '1.0.0'
+const VERSION = '1.0.1'
 
 require('dotenv').config()
 const fs       = require('fs')
@@ -99,7 +99,7 @@ Your survival score gets a bonus when your holdings differ from both rivals.`,
     GAMMA: {
       label: 'Risk Manager',
       constraint: `You hold MAXIMUM 2 positions at any time.
-You MUST keep at least 40% cash at all times. This is enforced by the engine.
+You MUST keep at least 30% cash at all times. This is enforced by the engine.
 Your survival score rewards low drawdown more than raw returns.`,
       survivalBonus: 'stability'
     },
@@ -123,7 +123,7 @@ Your survival score rewards low drawdown more than raw returns.`,
   REGIME_MULTIPLIERS: {
     trending_up:   1.0,
     trending_down: 1.0,
-    ranging:       0.9,
+    ranging:       1.0,
     volatile:      0.5
   },
 
@@ -141,14 +141,14 @@ Your survival score rewards low drawdown more than raw returns.`,
       regime_overrides: {
         trending_up:   { buy_signal: 0.08 },                              // ride momentum hard
         trending_down: { buy_signal: 0.28, cvd_buy_min: 0.10 },          // very selective, need flow confirmation
-        ranging:       { buy_signal: 0.18 },                              // momentum weak, raise bar
+        ranging:       { buy_signal: 0.12 },                              // same bar as trending_up — signals no longer dampened
         volatile:      { buy_signal: 0.40, buy_size_pct: 0.10 },         // tiny positions, high bar
       },
     },
 
     BETA: {
-      funding_buy_min:  0.40,  // min funding_signal (crowded shorts) to trigger contrarian entry
-      fear_buy_max:     25,    // max Fear & Greed index for fear-based entry
+      funding_buy_min:  0.20,  // min funding_signal (crowded shorts) to trigger contrarian entry
+      fear_buy_max:     40,    // max Fear & Greed index for fear-based entry
       greed_sell_min:   75,    // min Fear & Greed index to trigger greed-based exit
       sell_signal:      0.50,  // exit when signal_score rises above this (no longer oversold)
       buy_size_pct:     0.20,  // fraction of capital per BUY
@@ -166,7 +166,7 @@ Your survival score rewards low drawdown more than raw returns.`,
       funding_buy_max: 0.60,  // max funding_signal (do not buy already-crowded longs)
       sell_loss_pct:   5,     // exit if unrealized loss exceeds this % (tighter than auto-stop)
       sell_profit_pct: 10,    // take profit at this % gain if flow turns
-      cash_min_pct:    0.40,  // must keep at least 40% in cash at all times
+      cash_min_pct:    0.30,  // must keep at least 30% in cash at all times
       max_positions:   2,     // hard cap on simultaneous open positions
       buy_size_pct:    0.15,  // fraction of capital per BUY (conservative)
       regime_overrides: {
