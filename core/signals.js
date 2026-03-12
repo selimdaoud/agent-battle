@@ -56,15 +56,23 @@ function momentumZscore(closes) {
   return lastRet / sd
 }
 
+// Bars per year for each supported candle interval
+const BARS_PER_YEAR = {
+  '1m': 525600, '3m': 175200, '5m': 105120,
+  '15m': 35040, '30m': 17520,
+  '1h': 8760, '2h': 4380, '4h': 2190
+}
+
 // Regime classifier — uses last 20 closes
-function classifyRegime(closes) {
+function classifyRegime(closes, interval = '1h') {
   if (closes.length < 10) return { regime: 'ranging', regime_confidence: 0.6 }
 
   const last20     = closes.slice(-20)
   const logReturns = last20.slice(1).map((v, i) => Math.log(v / last20[i]))
 
+  const barsPerYear = BARS_PER_YEAR[interval] || 8760
   const realisedVol = logReturns.length >= 2
-    ? stddev(logReturns) * Math.sqrt(8760)
+    ? stddev(logReturns) * Math.sqrt(barsPerYear)
     : 0
 
   if (realisedVol > 0.80) {
@@ -86,11 +94,17 @@ function classifyRegime(closes) {
   const sdRets   = stddev(logReturns)
   const adxProxy = sdRets > 0 ? meanAbs / sdRets : 0
 
-  if (adxProxy > 1.5 && smaSlope >= 0) {
-    return { regime: 'trending_up',   regime_confidence: clamp(adxProxy / 1.5, 0.5, 1.0) }
+  // Two independent trend signals:
+  //   adxProxy > 1.1  — directional momentum dominates noise (was 1.5, too strict for slow grinds)
+  //   |smaSlope| > 0.003 — 0.3% price drift over 5 bars is structurally directional
+  const adxTrending   = adxProxy > 1.1
+  const slopeTrending = Math.abs(smaSlope) > 0.003
+
+  if ((adxTrending || slopeTrending) && smaSlope >= 0) {
+    return { regime: 'trending_up',   regime_confidence: clamp(adxProxy / 1.1, 0.5, 1.0) }
   }
-  if (adxProxy > 1.5 && smaSlope < 0) {
-    return { regime: 'trending_down', regime_confidence: clamp(adxProxy / 1.5, 0.5, 1.0) }
+  if ((adxTrending || slopeTrending) && smaSlope < 0) {
+    return { regime: 'trending_down', regime_confidence: clamp(adxProxy / 1.1, 0.5, 1.0) }
   }
   return { regime: 'ranging', regime_confidence: 0.6 }
 }
@@ -121,11 +135,11 @@ async function fetchFundingRates() {
  * Returns { BTCUSDT: { volumes: [...], takerBuyBase: [...] }, ... }
  * Uses Promise.all so all pairs are fetched in parallel.
  */
-async function fetchVolumeData(pairs, limit = 20) {
+async function fetchVolumeData(pairs, limit = 20, interval = '1h') {
   const results = await Promise.all(
     pairs.map(async pair => {
       try {
-        const url  = `https://api.binance.com/api/v3/klines?symbol=${pair}&interval=1h&limit=${limit}`
+        const url  = `https://api.binance.com/api/v3/klines?symbol=${pair}&interval=${interval}&limit=${limit}`
         const res  = await fetch(url, { signal: AbortSignal.timeout(4000) })
         const bars = await res.json()
         // kline fields: [openTime, open, high, low, close, volume, ..., takerBuyBase, ...]
@@ -220,7 +234,7 @@ function normaliseFearGreed(value) {
  * priceHistories: { BTCUSDT: [65000, ..., 67420], ... }  — last 50 closes
  * opts.backtest:  true → skip all external API calls (returns neutral for new fields)
  */
-async function computeSignals(prices, priceHistories, { backtest = false } = {}) {
+async function computeSignals(prices, priceHistories, { backtest = false, interval = '1h' } = {}) {
 
   // ── Fetch external data in parallel (skipped in backtest mode) ──────────────
   let fundingRates = {}
@@ -230,7 +244,7 @@ async function computeSignals(prices, priceHistories, { backtest = false } = {})
   if (!backtest) {
     ;[fundingRates, volumeData, fearGreed] = await Promise.all([
       fetchFundingRates(),
-      fetchVolumeData(C.PAIRS),
+      fetchVolumeData(C.PAIRS, 20, interval),
       fetchFearGreed()
     ])
   }
@@ -291,7 +305,7 @@ async function computeSignals(prices, priceHistories, { backtest = false } = {})
     const vol_usd_20h   = volEntry ? volEntry.quoteVolumes.reduce((s, v) => s + v, 0) : null
 
     // ── Regime ────────────────────────────────────────────────────────────────
-    const { regime, regime_confidence } = classifyRegime(closes)
+    const { regime, regime_confidence } = classifyRegime(closes, interval)
 
     // ── Composite signal_score ────────────────────────────────────────────────
     const w   = C.SIGNAL_WEIGHTS

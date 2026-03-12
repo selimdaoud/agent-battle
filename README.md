@@ -136,11 +136,15 @@ Edit `.env`:
 OPENAI_API_KEY=sk-...          # Your OpenAI API key
 PORT=3000                       # API + WebSocket port
 WS_TOKEN=change_me_32_chars    # Secret token for dashboard auth (pick any long random string)
-TICK_INTERVAL_MS=900000         # How often agents trade (ms). 900000 = 15 minutes
+TICK_INTERVAL_MS=60000          # How often the engine fires (ms). 60000 = 1 minute. Keep shorter than CANDLE_INTERVAL.
+CANDLE_INTERVAL=15m             # Candle resolution for signal computation. Supported: 1m 3m 5m 15m 30m 1h 2h 4h
 INITIAL_CAPITAL=10000           # Starting USD per agent (delete sim.db after changing)
+SESSION_TRADES=5                # Auto-trigger analysis when 2-of-3 agents (A/B/G) each complete this many SELLs (0 = disabled)
 ```
 
 > **Never commit `.env`.** It is gitignored by default. `.env.example` is safe to commit.
+
+> **Tick vs candle interval:** `TICK_INTERVAL_MS` controls how often prices are fetched and agents run stop-loss checks. `CANDLE_INTERVAL` controls how often signals are recomputed from fresh candle data. Keep `TICK_INTERVAL_MS` ≤ `CANDLE_INTERVAL` in milliseconds — e.g. tick=60s, candle=15m gives 15 ticks per signal update, which is a good balance of live P&L monitoring vs. meaningful signal refresh.
 
 Key constants (edit in `core/world.js` → `const C`):
 
@@ -212,22 +216,24 @@ Key constants (edit in `core/world.js` → `const C`):
 
 **Strategy engine thresholds** (edit `C.STRATEGY` in `core/world.js`)
 
+Base thresholds — these are the defaults before regime overrides are applied. See the [Playbook → Strategy Engine](#4-deterministic-strategy-engine-corestrategyjsdecide) section for per-regime adjustments.
+
 | Constant | Default | Description |
 |---|---|---|
 | `STRATEGY.SYNTHESIS_EVERY_N_ROUNDS` | `20` | How often GPT-4o runs to generate personality text |
-| `STRATEGY.ALPHA.buy_signal` | `0.30` | Minimum signal_score for ALPHA to enter a new position |
+| `STRATEGY.ALPHA.buy_signal` | `0.12` | Base minimum signal_score for ALPHA to enter (regime-adjusted at runtime) |
 | `STRATEGY.ALPHA.sell_signal` | `-0.15` | signal_score threshold at which ALPHA exits a position |
-| `STRATEGY.ALPHA.cvd_buy_min` | `0.10` | Minimum CVD required to confirm buy flow for ALPHA |
+| `STRATEGY.ALPHA.cvd_buy_min` | `0.00` | Minimum CVD required to confirm buy flow for ALPHA |
 | `STRATEGY.ALPHA.cvd_sell_max` | `-0.30` | CVD below this triggers an ALPHA exit regardless of price |
 | `STRATEGY.ALPHA.funding_buy_max` | `0.50` | Max funding_signal — ALPHA won't buy already-crowded longs |
-| `STRATEGY.BETA.funding_buy_min` | `0.40` | Min funding_signal (crowded shorts) for BETA contrarian entry |
-| `STRATEGY.BETA.fear_buy_max` | `25` | F&G below this triggers BETA fear-based entry |
+| `STRATEGY.BETA.funding_buy_min` | `0.40` | Base min funding_signal (crowded shorts) for BETA contrarian entry (regime-adjusted) |
+| `STRATEGY.BETA.fear_buy_max` | `25` | Base max F&G for fear-based entry (regime-adjusted) |
 | `STRATEGY.BETA.greed_sell_min` | `75` | F&G above this triggers BETA greed-based exit |
 | `STRATEGY.BETA.sell_signal` | `0.50` | BETA exits when signal normalises above this (thesis complete) |
-| `STRATEGY.GAMMA.buy_signal` | `0.50` | High-quality bar — GAMMA only enters on strong conviction |
-| `STRATEGY.GAMMA.cvd_buy_min` | `0.20` | GAMMA requires strong confirmed buy flow |
-| `STRATEGY.GAMMA.sell_loss_pct` | `5` | GAMMA exits at 5% loss (tighter than the global 8% auto-stop) |
-| `STRATEGY.GAMMA.sell_profit_pct` | `10` | GAMMA takes profit at 10% gain when flow is turning |
+| `STRATEGY.GAMMA.buy_signal` | `0.18` | Base high-quality entry bar for GAMMA (regime-adjusted at runtime) |
+| `STRATEGY.GAMMA.cvd_buy_min` | `0.05` | GAMMA requires confirmed buy flow |
+| `STRATEGY.GAMMA.sell_loss_pct` | `5` | Base loss exit % for GAMMA (tightened to 2–3% in volatile/down regimes) |
+| `STRATEGY.GAMMA.sell_profit_pct` | `10` | GAMMA takes profit at this % gain when flow is turning |
 | `STRATEGY.GAMMA.cash_min_pct` | `0.40` | GAMMA must hold at least 40% cash (engine-enforced) |
 | `STRATEGY.GAMMA.max_positions` | `2` | GAMMA hard cap on simultaneous open positions |
 
@@ -373,13 +379,18 @@ This section describes the complete decision cycle — everything that happens f
 
 ### 1. Signal Computation (`core/signals.js`)
 
-At the start of every tick the engine fetches live data from three external sources in parallel, then computes seven sub-signals per pair combined into a single `signal_score` in **−1 to +1**:
+Signals are decoupled from ticks. The engine runs two independent loops:
 
-**Live data fetched every tick:**
+- **Every tick** (`TICK_INTERVAL_MS`): fetches live spot prices → updates `_lastPrices` for P&L and stop-loss monitoring. Does **not** recompute signals.
+- **Every candle** (`CANDLE_INTERVAL`): closes the current candle (pushes price into `priceHistory`), refetches all external data, and recomputes the full signal set. Cached signals are used by all ticks within the same candle period.
+
+This means agents always trade on stable, candle-aligned signals rather than intra-candle noise, while stop-losses still react to live price movement every tick.
+
+**Data fetched on each candle close:**
 
 | Source | Endpoint | What it provides |
 |---|---|---|
-| Binance spot klines | `api.binance.com/api/v3/klines` | Volume, taker buy volume, price bars — all 15 pairs in parallel |
+| Binance spot klines | `api.binance.com/api/v3/klines?interval=CANDLE_INTERVAL` | Volume, taker buy volume, price bars — all 15 pairs in parallel |
 | Binance perpetuals | `fapi.binance.com/fapi/v1/premiumIndex` | Funding rates for all perpetual contracts |
 | Alternative.me | `api.alternative.me/fng/?limit=1` | Crypto Fear & Greed Index (0–100) |
 
@@ -397,7 +408,7 @@ All fetches have a 4-second timeout and neutral fallbacks — a failed fetch nev
 | `volume_zscore` | 10% | Last-bar volume vs rolling mean, clamped to ±3 (real Binance kline data) |
 | `momentum_4h` | 5% | Medium-term momentum computed over every 4th bar of the 1h history |
 
-The composite score is multiplied by a **regime damper** before clamping to [−1, +1]: `trending_up/down × 1.0`, `ranging × 0.6`, `volatile × 0.3`. This reduces false signals in choppy or high-volatility regimes.
+The composite score is multiplied by a **regime damper** before clamping to [−1, +1]: `trending_up/down × 1.0`, `ranging × 0.9`, `volatile × 0.5`. This reduces false signals in choppy or high-volatility regimes.
 
 The `SignalVector` also carries `vol_usd_20h` (20h USD volume, used by the risk limit to cap trade size at 0.5% of market volume) and `rsi_divergence` (bearish divergence flag when price makes a new high but RSI does not).
 
@@ -472,7 +483,47 @@ The LLM is instructed to respond with **a single plain-text sentence** (≤80 to
 
 ### 4. Deterministic Strategy Engine (`core/strategy.js → decide`)
 
-Every tick each agent's decision is made by a deterministic rules engine — no LLM involved. The engine dispatches to an archetype-specific function based on `ctx.agentName`:
+Every tick each agent's decision is made by a deterministic rules engine — no LLM involved. The engine dispatches to an archetype-specific function based on `ctx.agentName`.
+
+#### Regime-aware thresholds
+
+All four agents now adjust their entry and exit thresholds based on the current **market regime** (`trending_up`, `trending_down`, `ranging`, `volatile`). The regime is detected per-pair from the last 20 candle closes and reported in each `SignalVector`. Base thresholds are defined in `C.STRATEGY`, with per-regime overrides applied at decision time via `regime_overrides`:
+
+**ALPHA** — Momentum Rider:
+
+| Regime | `buy_signal` | Notes |
+|---|---|---|
+| `trending_up` | **0.08** | Ride momentum hard — lower bar |
+| `trending_down` | **0.28** + `cvd_buy_min: 0.10` | Very selective; require flow confirmation |
+| `ranging` | **0.18** | Momentum weak in range — raise bar |
+| `volatile` | **0.40**, `buy_size_pct: 0.10` | Tiny positions, high conviction required |
+
+**BETA** — Contrarian:
+
+| Regime | `funding_buy_min` / `fear_buy_max` | Notes |
+|---|---|---|
+| `trending_up` | `funding_buy_min: 0.55` | Need extreme positioning to fade a trend |
+| `trending_down` | `fear_buy_max: 35` | More fear-based entry opportunities |
+| `ranging` | *(no change)* | Best regime for contrarian — thresholds unchanged |
+| `volatile` | `funding_buy_min: 0.30`, `fear_buy_max: 40`, `buy_size_pct: 0.12` | Active but smaller sizing |
+
+**GAMMA** — Risk Manager:
+
+| Regime | `buy_signal` | Notes |
+|---|---|---|
+| `trending_up` | **0.14** | Slightly looser in a clear uptrend |
+| `trending_down` | **0.25**, `sell_loss_pct: 3` | Higher entry bar, tighter stops |
+| `ranging` | **0.18** *(no change)* | Normal |
+| `volatile` | **0.35**, `sell_loss_pct: 2`, `buy_size_pct: 0.08` | Ultra-conservative |
+
+**MEGA** — Adaptive Synthesizer: regime overrides are loaded from `agents/mega-config.json → regime_overrides` and updated automatically by the post-session analysis pipeline.
+
+The current regime and the effective threshold are included in every agent's reasoning string, visible in the dashboard event log, e.g.:
+```
+ALPHA [ranging] entering SOL/USDT: score=0.19 (thr=0.18), cvd=+0.12, fund=-0.03.
+```
+
+#### Decision flow
 
 **ALPHA** (`alphaDecide`):
 1. Scans held positions for exit conditions (momentum reversed, selling pressure, deadweight)
@@ -486,7 +537,7 @@ Every tick each agent's decision is made by a deterministic rules engine — no 
 3. Enters the top candidate when it passes funding or fear filter and rivals don't already hold it
 
 **GAMMA** (`gammaDecide`):
-1. Stops out at −5% loss (before checking anything else)
+1. Stops out at loss exceeding `sell_loss_pct` (before checking anything else)
 2. Exits any position where the signal is bearish or the profit target is met with flow turning
 3. Only considers a BUY if cash ratio, Fear & Greed, and all four signal filters pass
 4. Verifies post-trade cash ratio before executing
@@ -564,6 +615,29 @@ Every `CULL_EVERY_N_ROUNDS` (default: 10) rounds, the engine checks all three sc
 ---
 
 ### Reading the Dashboard
+
+---
+
+#### Portfolio Overview (top bar)
+
+The summary bar above the agent grid shows the investor-level accounting:
+
+```
+PORTFOLIO OVERVIEW   Committed: $40,000   Total Assets: $41,200   P&L: +$1,200 (+3.0%)   Fees: $0.120   Cash: $12,000   Crypto: $29,200   Exposure: 71%   Leader: ALPHA $12,400
+```
+
+| Field | What it means |
+|---|---|
+| `Committed` | Total capital ever deployed — initial $40k plus any respawn injections. **Never decreases.** This is always the P&L denominator. |
+| `(+$X respawns)` | Extra capital injected via respawns, shown in magenta when non-zero. |
+| `At Risk: $X  $Y returned` | Shown only after an elimination. `At Risk` = capital currently deployed. `returned` = principal reclaimed from eliminated agents (not a gain — it's your money back). |
+| `Total Assets` | `alive agents' market value + returned principal`. This is your true current net worth as the investor. |
+| `P&L` | `(Total Assets − Committed) / Committed`. Because `Committed` never shrinks, losses from eliminated agents are always visible here. |
+| `Fees` | Cumulative trading fees paid across all agents. |
+| `Cash / Crypto` | Split of alive agents' portfolios. |
+| `Exposure` | Fraction of alive agents' total value deployed in crypto (vs. cash). |
+
+> **Why `Committed` never shrinks:** if an agent is eliminated with $6k (losing $4k of its original $10k), that $4k loss shows as a negative P&L rather than disappearing from the denominator. Without this, eliminating a losing agent would make the P&L % look better even though money was actually lost.
 
 ---
 
@@ -687,6 +761,8 @@ Every 10 rounds:
 4. More than **25% below the leader** (after round 20) → auto-threatened
 5. **Every tick**: if a threatened agent is no longer in last place AND no longer underperforming → **threat automatically cleared** (`AUTO_CLEAR_THREAT` logged)
 
+> **MEGA is exempt from all automatic survival rules** (bankruptcy, cull, underperformance gap). MEGA can only be terminated by an explicit manual command from the Master. This is intentional: MEGA is the investor's agent and its fate is controlled by the human, not the engine.
+
 Survival score formula:
 ```
 score = P&L×50% + consistency×25% + adaptation×15% − risk×10%
@@ -786,6 +862,27 @@ curl -X POST http://localhost:3000/command \
 curl -X POST http://localhost:3000/command \
   -H "Content-Type: application/json" \
   -d '{"token":"YOUR_TOKEN","command":"set_interval","params":{"ms":300000}}'
+```
+
+### Session Analysis Pipeline
+
+The post-session analysis (`tools/post-session.js`) exports the session, generates a report, and proposes MEGA config updates. It triggers in three ways:
+
+| Trigger | Condition |
+|---|---|
+| **Quorum** (automatic) | 2 out of 3 agents (ALPHA, BETA, GAMMA) each complete ≥ `SESSION_TRADES` sells. The engine stops, analysis runs, then the engine restarts with sell counters reset. |
+| **Manual** (`run_pipeline`) | Forced via the dashboard or REST API at any time. |
+| *(Winner — not triggered)* | When only 1 agent survives, a `WINNER` event is broadcast but analysis does **not** auto-run. |
+
+> **Why quorum (2-of-3) instead of all-3?** A single slow or inactive agent (e.g. GAMMA holding cash during a ranging market) should not block the analysis indefinitely. Quorum ensures the session closes once a meaningful majority have traded.
+
+> **MEGA sells are not counted.** MEGA's trades do not contribute to the sell threshold — only ALPHA, BETA, and GAMMA are tracked.
+
+To force an analysis manually:
+```bash
+curl -X POST http://localhost:3000/command \
+  -H "Content-Type: application/json" \
+  -d '{"token":"YOUR_TOKEN","command":"run_pipeline"}'
 ```
 
 ---

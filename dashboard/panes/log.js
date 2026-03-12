@@ -80,6 +80,11 @@ function create(parent) {
     }
   }
 
+  function onCandle(data) {
+    const ts = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    append(`{grey-fg}${ts}{/grey-fg} {blue-fg}▶ ${data.message}{/blue-fg}`, 'CANDLE')
+  }
+
   function onError(data) {
     append(`{magenta-fg}ERROR: ${data.message}{/magenta-fg}`, 'ERROR')
   }
@@ -112,7 +117,12 @@ function create(parent) {
     parent.screen.render()
   }
 
-  return { append, onTick, onTrade, onSurvival, onError, cycleFilter, cycleAgentFilter }
+  function clear() {
+    entries.length = 0
+    render()
+  }
+
+  return { append, clear, onTick, onTrade, onSurvival, onCandle, onError, cycleFilter, cycleAgentFilter }
 }
 
 module.exports = { create }

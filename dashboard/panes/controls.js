@@ -74,12 +74,13 @@ function create(parent, clientRef, logPane, screen) {
 
     let tradesStr = ''
     if (sessionTrades > 0) {
-      const a = sellCounts.ALPHA || 0
-      const b = sellCounts.BETA  || 0
-      const g = sellCounts.GAMMA || 0
-      const n = sessionTrades
-      const fmt = (v) => v >= n ? `{green-fg}${v}/${n}{/green-fg}` : `${v}/${n}`
-      tradesStr = `   Trades: A:${fmt(a)} B:${fmt(b)} G:${fmt(g)}`
+      const a     = sellCounts.ALPHA || 0
+      const b     = sellCounts.BETA  || 0
+      const g     = sellCounts.GAMMA || 0
+      const total = a + b + g
+      const done  = total >= sessionTrades
+      const totStr = done ? `{green-fg}${total}/${sessionTrades}{/green-fg}` : `${total}/${sessionTrades}`
+      tradesStr = `   Sells: A:${a} B:${b} G:${g}  total:${totStr}`
     }
     statusBar.setContent(
       `  ${connStr}   ${runStr}   Round: ${round}   Interval: ${INTERVAL_LABELS[intervalIdx]}${tradesStr}`

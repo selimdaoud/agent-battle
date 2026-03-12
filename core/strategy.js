@@ -16,8 +16,13 @@ const fs   = require('fs')
 const path = require('path')
 const { C } = require('./world')
 
-// MEGA config — loaded once at startup from agents/mega-config.json
-const megaConfig = JSON.parse(fs.readFileSync(path.join(__dirname, '../agents/mega-config.json'), 'utf8'))
+// MEGA config — loaded at startup; hot-reloadable via reloadMegaConfig()
+const MEGA_CONFIG_PATH = path.join(__dirname, '../agents/mega-config.json')
+let megaConfig = JSON.parse(fs.readFileSync(MEGA_CONFIG_PATH, 'utf8'))
+
+function reloadMegaConfig() {
+  megaConfig = JSON.parse(fs.readFileSync(MEGA_CONFIG_PATH, 'utf8'))
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -103,7 +108,9 @@ function isDeadweight(pair, ctx) {
  * Exit fast when momentum reverses or selling pressure builds.
  */
 function alphaDecide(ctx, smap, threatened) {
-  const cfg = C.STRATEGY.ALPHA
+  const regime = ctx.signals[0]?.regime || 'ranging'
+  const base   = C.STRATEGY.ALPHA
+  const cfg    = { ...base, ...(base.regime_overrides[regime] || {}) }
   const threatAdj = threatened ? 0.08 : 0  // lower threshold when threatened
 
   // ── SELL: scan holdings for exits ──────────────────────────────────────────
@@ -167,12 +174,12 @@ function alphaDecide(ctx, smap, threatened) {
       action:       'BUY',
       pair:         s.pair,
       amount_usd:   amount,
-      reasoning:    `ALPHA entering ${C.LABELS[s.pair] || s.pair}: score=${s.signal_score.toFixed(2)}, cvd=${s.cvd_norm.toFixed(2)}, fund=${s.funding_signal.toFixed(2)}. Strong momentum with confirmed flow.`,
+      reasoning:    `ALPHA [${regime}] entering ${C.LABELS[s.pair] || s.pair}: score=${s.signal_score.toFixed(2)} (thr=${cfg.buy_signal.toFixed(2)}), cvd=${s.cvd_norm.toFixed(2)}, fund=${s.funding_signal.toFixed(2)}.`,
       signal_score: s.signal_score
     }
   }
 
-  return holdDecision('no qualifying momentum signal')
+  return holdDecision(`ALPHA [${regime}]: no signal above threshold ${cfg.buy_signal.toFixed(2)}`)
 }
 
 /**
@@ -181,7 +188,9 @@ function alphaDecide(ctx, smap, threatened) {
  * Exit when the crowd catches up (rivals hold it, greed spikes, signal normalises).
  */
 function betaDecide(ctx, smap, threatened) {
-  const cfg        = C.STRATEGY.BETA
+  const regime     = ctx.signals[0]?.regime || 'ranging'
+  const base       = C.STRATEGY.BETA
+  const cfg        = { ...base, ...(base.regime_overrides[regime] || {}) }
   const consensus  = rivalConsensus(ctx)
   const fearGreed  = ctx.signals[0]?.fear_greed ?? 50
   const threatAdj  = threatened ? 0.15 : 0
@@ -237,12 +246,12 @@ function betaDecide(ctx, smap, threatened) {
       action:       'BUY',
       pair:         s.pair,
       amount_usd:   amount,
-      reasoning:    `BETA contrarian entry in ${C.LABELS[s.pair] || s.pair}: ${trigger}, score=${s.signal_score.toFixed(2)}. Rivals not holding — divergence preserved.`,
+      reasoning:    `BETA [${regime}] contrarian entry in ${C.LABELS[s.pair] || s.pair}: ${trigger}, score=${s.signal_score.toFixed(2)}. Rivals not holding — divergence preserved.`,
       signal_score: s.signal_score
     }
   }
 
-  return holdDecision('no qualifying contrarian setup')
+  return holdDecision(`BETA [${regime}]: no qualifying contrarian setup`)
 }
 
 /**
@@ -251,7 +260,9 @@ function betaDecide(ctx, smap, threatened) {
  * Exit quickly on any loss or when flow turns against the position.
  */
 function gammaDecide(ctx, smap, threatened) {
-  const cfg      = C.STRATEGY.GAMMA
+  const regime    = ctx.signals[0]?.regime || 'ranging'
+  const base      = C.STRATEGY.GAMMA
+  const cfg       = { ...base, ...(base.regime_overrides[regime] || {}) }
   const fearGreed = ctx.signals[0]?.fear_greed ?? 50
   const threatAdj = threatened ? 0.10 : 0
 
@@ -326,12 +337,12 @@ function gammaDecide(ctx, smap, threatened) {
       action:       'BUY',
       pair:         s.pair,
       amount_usd:   amount,
-      reasoning:    `GAMMA high-quality entry in ${C.LABELS[s.pair] || s.pair}: score=${s.signal_score.toFixed(2)}, cvd=${s.cvd_norm.toFixed(2)}, fund=${s.funding_signal.toFixed(2)}, F&G=${fearGreed}. All filters passed.`,
+      reasoning:    `GAMMA [${regime}] high-quality entry in ${C.LABELS[s.pair] || s.pair}: score=${s.signal_score.toFixed(2)} (thr=${cfg.buy_signal.toFixed(2)}), cvd=${s.cvd_norm.toFixed(2)}, fund=${s.funding_signal.toFixed(2)}, F&G=${fearGreed}.`,
       signal_score: s.signal_score
     }
   }
 
-  return holdDecision('GAMMA: signal quality insufficient — preserving capital')
+  return holdDecision(`GAMMA [${regime}]: signal quality insufficient (thr=${cfg.buy_signal.toFixed(2)}) — preserving capital`)
 }
 
 /**
@@ -466,4 +477,4 @@ function decide(ctx) {
   return decision
 }
 
-module.exports = { decide }
+module.exports = { decide, reloadMegaConfig }

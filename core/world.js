@@ -5,7 +5,12 @@ const fs       = require('fs')
 const path     = require('path')
 const Database = require('better-sqlite3')
 
-const _megaCfg = JSON.parse(fs.readFileSync(path.join(__dirname, '../agents/mega-config.json'), 'utf8'))
+const _MEGA_CONFIG_PATH = path.join(__dirname, '../agents/mega-config.json')
+let _megaCfg = JSON.parse(fs.readFileSync(_MEGA_CONFIG_PATH, 'utf8'))
+
+function reloadMegaConfig() {
+  _megaCfg = JSON.parse(fs.readFileSync(_MEGA_CONFIG_PATH, 'utf8'))
+}
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 // These are defined before C so they can be interpolated into ARCHETYPES strings
@@ -131,6 +136,12 @@ Your survival score rewards low drawdown more than raw returns.`,
       cvd_sell_max:  -0.30,  // cvd below which ALPHA exits regardless of price signal
       funding_buy_max: 0.50, // max funding_signal allowed (avoid buying already-crowded longs)
       buy_size_pct:   0.25,  // fraction of capital per BUY
+      regime_overrides: {
+        trending_up:   { buy_signal: 0.08 },                              // ride momentum hard
+        trending_down: { buy_signal: 0.28, cvd_buy_min: 0.10 },          // very selective, need flow confirmation
+        ranging:       { buy_signal: 0.18 },                              // momentum weak, raise bar
+        volatile:      { buy_signal: 0.40, buy_size_pct: 0.10 },         // tiny positions, high bar
+      },
     },
 
     BETA: {
@@ -139,6 +150,12 @@ Your survival score rewards low drawdown more than raw returns.`,
       greed_sell_min:   75,    // min Fear & Greed index to trigger greed-based exit
       sell_signal:      0.50,  // exit when signal_score rises above this (no longer oversold)
       buy_size_pct:     0.20,  // fraction of capital per BUY
+      regime_overrides: {
+        trending_up:   { funding_buy_min: 0.55 },                         // need extreme positioning to fade a trend
+        trending_down: { fear_buy_max: 35 },                              // more fear entry opportunities
+        ranging:       {},                                                 // best regime for contrarian — no change
+        volatile:      { funding_buy_min: 0.30, fear_buy_max: 40, buy_size_pct: 0.12 }, // active but smaller
+      },
     },
 
     GAMMA: {
@@ -150,6 +167,12 @@ Your survival score rewards low drawdown more than raw returns.`,
       cash_min_pct:    0.40,  // must keep at least 40% in cash at all times
       max_positions:   2,     // hard cap on simultaneous open positions
       buy_size_pct:    0.15,  // fraction of capital per BUY (conservative)
+      regime_overrides: {
+        trending_up:   { buy_signal: 0.14 },                              // slightly looser in a clear uptrend
+        trending_down: { buy_signal: 0.25, sell_loss_pct: 3 },           // tighter stops, higher entry bar
+        ranging:       {},                                                 // normal
+        volatile:      { buy_signal: 0.35, sell_loss_pct: 2, buy_size_pct: 0.08 }, // ultra-conservative
+      },
     },
   }
 }
@@ -546,7 +569,7 @@ class World {
 
   // ── Write methods ────────────────────────────────────────────────────────
   updatePrices(priceMap) {
-    // Update rolling priceHistory (max 50 per pair)
+    // Update rolling priceHistory (max 50 per pair) — call only on candle close
     for (const pair of C.PAIRS) {
       if (priceMap[pair] !== undefined) {
         const hist = this._snapshot.priceHistory[pair]
@@ -554,12 +577,15 @@ class World {
         if (hist.length > 50) hist.shift()
       }
     }
+    this.setLivePrices(priceMap)
+  }
 
-    // Log PRICE tick to DB
+  /** Update live prices and DB tick without touching priceHistory.
+   *  Call every tick; call updatePrices() only on candle close. */
+  setLivePrices(priceMap) {
     const row = this._db.prepare(
       'INSERT INTO ticks(ts, round, type, agent, payload) VALUES(?,?,?,?,?)'
     ).run(Date.now(), this._snapshot.round, 'PRICE', null, JSON.stringify(priceMap))
-
     this._snapshot.lastEventId = row.lastInsertRowid
     this._lastPrices = { ...priceMap }
   }
@@ -974,3 +1000,4 @@ function _maxDrawdown(portfolioValues) {
 module.exports = World
 module.exports.C = C
 module.exports.pairSpread = _pairSpread
+module.exports.reloadMegaConfig = reloadMegaConfig

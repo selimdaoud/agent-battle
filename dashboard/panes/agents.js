@@ -59,18 +59,19 @@ function create(parent) {
     )
 
     // ── Aggregate calculations ────────────────────────────────────────────────
-    const combinedTotal    = allAgents.reduce((s, a) => s + totalValue(a, prices), 0)
     const combinedFees     = allAgents.reduce((s, a) => s + (a.totalFees || 0), 0)
-    const combinedCash     = allAgents.reduce((s, a) => s + a.capital, 0)
-    const combinedCrypto   = combinedTotal - combinedCash
+    const aliveTotal       = alive.reduce((s, a) => s + totalValue(a, prices), 0)
+    const combinedCash     = alive.reduce((s, a) => s + a.capital, 0)
+    const combinedCrypto   = aliveTotal - combinedCash
     const totalRecovered   = snap.totalRecovered || 0
     const atRisk           = snap.totalInjected || TOTAL_START          // currently deployed (shrinks on elimination)
     const totalCommitted   = atRisk + totalRecovered                    // ever committed — never decreases, P&L base
-    const pnlAmt           = combinedTotal - totalCommitted
+    const totalAssets      = aliveTotal + totalRecovered                // alive market value + returned principal
+    const pnlAmt           = totalAssets - totalCommitted
     const pnlPct           = (pnlAmt / totalCommitted * 100).toFixed(1)
     const pnlSign          = pnlAmt >= 0 ? '+' : ''
     const pnlColor         = pnlAmt >= 0 ? 'green' : 'red'
-    const exposurePct      = combinedTotal > 0 ? (combinedCrypto / combinedTotal * 100).toFixed(0) : 0
+    const exposurePct      = aliveTotal > 0 ? (combinedCrypto / aliveTotal * 100).toFixed(0) : 0
 
     // Leader + win tracking
     const leader = ranked[0]
@@ -125,14 +126,14 @@ function create(parent) {
     summary.setContent(
       ` {bold}PORTFOLIO OVERVIEW{/bold}` +
       `   Committed: {bold}$${fmt(totalCommitted)}{/bold}${respawnExtra}${recoveredExtra}` +
-      `   Value: {bold}$${fmt(combinedTotal)}{/bold}` +
+      `   Total Assets: {bold}$${fmt(totalAssets)}{/bold}` +
       `   P&L: {${pnlColor}-fg}{bold}${pnlSign}$${fmt(pnlAmt)} (${pnlSign}${pnlPct}%){/bold}{/${pnlColor}-fg}` +
       `   Fees: {magenta-fg}$${combinedFees.toFixed(3)}{/magenta-fg}` +
       `   Cash: {bold}$${fmt(combinedCash)}{/bold}` +
       `   Crypto: {bold}$${fmt(combinedCrypto)}{/bold}` +
       `   Exposure: {bold}${exposurePct}%{/bold}` +
       `   ${leaderStr}\n` +
-      ` ${bar(combinedCash, combinedCrypto, combinedTotal)}\n` +
+      ` ${bar(combinedCash, combinedCrypto, aliveTotal)}\n` +
       `${consensusLine}\n` +
       `${winLine}`
     )

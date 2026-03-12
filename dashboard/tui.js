@@ -140,6 +140,9 @@ function buildHandlers() {
       log.onTrade(result)
       controls.onTrade(result)
     },
+    onCandle(data) {
+      log.onCandle(data)
+    },
     onSurvival(data) {
       log.onSurvival(data)
     },
@@ -168,6 +171,7 @@ function buildHandlers() {
     },
     onLogHistory(data) {
       const handlers = this
+      log.clear()
       for (const ev of (data.events || [])) {
         switch (ev.type) {
           case 'TRADE':    log.onTrade(ev);    break
@@ -175,6 +179,7 @@ function buildHandlers() {
           case 'WINNER':   log.append(`{bold}{green-fg}🏆 WINNER: ${ev.agent}{/green-fg}{/bold}`, 'SURVIVAL'); break
           case 'ERROR':    log.onError(ev);    break
           case 'PIPELINE': handlers.onPipeline(ev); break
+          case 'CANDLE':   log.onCandle(ev);   break
         }
       }
       screen.render()

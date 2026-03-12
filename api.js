@@ -7,6 +7,8 @@ const http                = require('http')
 const fs                  = require('fs')
 const path                = require('path')
 const engine              = require('./engine')
+const strategy            = require('./core/strategy')
+const World               = require('./core/world')
 
 const DEBUG         = process.env.DEBUG === '1' || process.env.DEBUG === 'true'
 const SESSION_TRADES = parseInt(process.env.SESSION_TRADES) || 0
@@ -24,7 +26,7 @@ app.use(express.static('public'))
 // ── Event log (persisted to disk, replayed to new TUI connections) ────────────
 const LOG_FILE    = path.join(__dirname, 'sessions/events.jsonl')
 const MAX_LOG     = 500
-const LOG_TYPES   = new Set(['TRADE', 'SURVIVAL', 'WINNER', 'ERROR', 'PIPELINE'])
+const LOG_TYPES   = new Set(['TRADE', 'SURVIVAL', 'WINNER', 'ERROR', 'PIPELINE', 'CANDLE'])
 
 let eventLog = []
 let pipelineRunning = false
@@ -42,7 +44,8 @@ function _initSellCounts() {
     ).all()
     db.close()
     for (const r of rows) if (r.agent in sellCounts) sellCounts[r.agent] = r.cnt
-    log(`[PIPELINE] Sell counts loaded from DB: A=${sellCounts.ALPHA} B=${sellCounts.BETA} G=${sellCounts.GAMMA}`)
+    const t = sellCounts.ALPHA + sellCounts.BETA + sellCounts.GAMMA
+    log(`[PIPELINE] Sell counts loaded from DB: A=${sellCounts.ALPHA} B=${sellCounts.BETA} G=${sellCounts.GAMMA}  total=${t}/${SESSION_TRADES}`)
   } catch (e) { log(`[PIPELINE] Could not init sell counts: ${e.message}`) }
 }
 _initSellCounts()
@@ -59,9 +62,10 @@ function _loadEventLog() {
 _loadEventLog()
 
 function _appendEventLog(msg) {
-  eventLog.push(msg)
+  const entry = { ts: Date.now(), ...msg }
+  eventLog.push(entry)
   if (eventLog.length > MAX_LOG) eventLog.shift()
-  try { fs.appendFileSync(LOG_FILE, JSON.stringify(msg) + '\n') } catch (_) {}
+  try { fs.appendFileSync(LOG_FILE, JSON.stringify(entry) + '\n') } catch (_) {}
 }
 
 // ── Broadcast helper ──────────────────────────────────────────────────────────
@@ -114,12 +118,12 @@ engine.emitter.on('trade', result => {
     // Track SELL counts for auto-export threshold (increment before broadcast so TUI gets updated counts)
     if (trade.action === 'SELL' && result.agent in sellCounts && SESSION_TRADES > 0 && !pipelineRunning) {
       sellCounts[result.agent]++
-      log(`[PIPELINE] Sell counts: A=${sellCounts.ALPHA} B=${sellCounts.BETA} G=${sellCounts.GAMMA} / ${SESSION_TRADES}`)
-      const allReached = Object.values(sellCounts).every(n => n >= SESSION_TRADES)
-      if (allReached) {
+      const total = sellCounts.ALPHA + sellCounts.BETA + sellCounts.GAMMA
+      log(`[PIPELINE] Sell counts: A=${sellCounts.ALPHA} B=${sellCounts.BETA} G=${sellCounts.GAMMA}  total=${total}/${SESSION_TRADES}`)
+      if (total >= SESSION_TRADES) {
         pipelineRunning = true
         engine.stop()
-        broadcast({ type: 'PIPELINE', status: 'started', message: `All agents reached ${SESSION_TRADES} trades — running session analysis...` })
+        broadcast({ type: 'PIPELINE', status: 'started', message: `${total} combined sells reached — running session analysis...` })
         _runPostSession(() => {
           sellCounts.ALPHA = 0; sellCounts.BETA = 0; sellCounts.GAMMA = 0
           pipelineRunning = false
@@ -134,6 +138,17 @@ engine.emitter.on('trade', result => {
     dbg(`  reasoning: ${(decision.reasoning || '').slice(0, 120)}`)
   }
   broadcast({ type: 'TRADE', ...result, sellCounts: { ...sellCounts }, sessionTrades: SESSION_TRADES })
+})
+
+engine.emitter.on('candle', ({ interval, signals }) => {
+  const btc     = signals.find(s => s.pair === 'BTCUSDT')
+  const regime  = btc?.regime || '?'
+  const top     = signals.slice().sort((a, b) => Math.abs(b.signal_score) - Math.abs(a.signal_score))[0]
+  const topStr  = top ? `  top: ${top.pair} ${top.signal_score > 0 ? '+' : ''}${top.signal_score.toFixed(2)} [${top.regime}]` : ''
+  const btcStr  = btc ? `  BTC $${Math.round(btc.price).toLocaleString()}` : ''
+  const msg     = `${interval} candle closed${btcStr}  regime: ${regime}${topStr}`
+  log(`[CANDLE] ${msg}`)
+  broadcast({ type: 'CANDLE', interval, regime, message: msg })
 })
 
 engine.emitter.on('winner', name => {
@@ -286,10 +301,13 @@ function _applyMegaChange(approved) {
       if (megaCfg.threat_playbook.length > 6) megaCfg.threat_playbook = megaCfg.threat_playbook.slice(-6)
     }
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(megaCfg, null, 2))
+    World.reloadMegaConfig()
+    strategy.reloadMegaConfig()
     history.applied.push({ sessionIndex: proposed.sessionsAnalyzed, appliedAt: new Date().toISOString(), field: p.field, from: p.current, to: p.proposed, basis: p.confidence })
     const msg = `MEGA config updated (v${megaCfg.meta.version}): ${p.field} ${p.current} → ${p.proposed}`
     broadcast({ type: 'PIPELINE', status: 'done', message: msg })
     log(`[APPLY] ${msg}`)
+    log(`[APPLY] Hot-reloaded mega-config into strategy + world (no restart needed)`)
   } else {
     history.rejected.push({ sessionIndex: proposed.sessionsAnalyzed, rejectedAt: new Date().toISOString(), field: p.field, proposed: p.proposed, basis: p.confidence })
     const msg = `Change rejected — ${p.field} stays at ${p.current}`

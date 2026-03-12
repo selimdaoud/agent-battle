@@ -24,6 +24,7 @@ function connect(host, port, token, handlers) {
         case 'ERROR':     handlers.onError    && handlers.onError(data);    break
         case 'PIPELINE':     handlers.onPipeline    && handlers.onPipeline(data);    break
         case 'PROPOSAL':     handlers.onProposal    && handlers.onProposal(data);    break
+        case 'CANDLE':       handlers.onCandle      && handlers.onCandle(data);      break
         case 'LOG_HISTORY':  handlers.onLogHistory  && handlers.onLogHistory(data);  break
       }
     } catch (_) {}
