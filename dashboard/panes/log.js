@@ -1,5 +1,7 @@
 'use strict'
 
+const VERSION = '1.0.0'
+
 const blessed = require('blessed')
 
 const FILTERS       = ['ALL', 'TRADES', 'SURVIVAL', 'ERRORS']
@@ -125,4 +127,4 @@ function create(parent) {
   return { append, clear, onTick, onTrade, onSurvival, onCandle, onError, cycleFilter, cycleAgentFilter }
 }
 
-module.exports = { create }
+module.exports = { create, VERSION }

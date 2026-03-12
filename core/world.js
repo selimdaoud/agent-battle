@@ -1,5 +1,7 @@
 'use strict'
 
+const VERSION = '1.0.0'
+
 require('dotenv').config()
 const fs       = require('fs')
 const path     = require('path')
@@ -1001,3 +1003,4 @@ module.exports = World
 module.exports.C = C
 module.exports.pairSpread = _pairSpread
 module.exports.reloadMegaConfig = reloadMegaConfig
+module.exports.VERSION = VERSION

@@ -16,6 +16,8 @@ const fs   = require('fs')
 const path = require('path')
 const { C } = require('./world')
 
+const VERSION = '1.0.0'
+
 // MEGA config — loaded at startup; hot-reloadable via reloadMegaConfig()
 const MEGA_CONFIG_PATH = path.join(__dirname, '../agents/mega-config.json')
 let megaConfig = JSON.parse(fs.readFileSync(MEGA_CONFIG_PATH, 'utf8'))
@@ -477,4 +479,4 @@ function decide(ctx) {
   return decision
 }
 
-module.exports = { decide, reloadMegaConfig }
+module.exports = { decide, reloadMegaConfig, VERSION }

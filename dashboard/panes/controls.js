@@ -1,5 +1,7 @@
 'use strict'
 
+const VERSION = '1.0.0'
+
 const blessed = require('blessed')
 
 const INTERVALS       = [15000, 30000, 60000, 300000, 900000]
@@ -227,4 +229,4 @@ function create(parent, clientRef, logPane, screen) {
   return { onConnect, onDisconnect, onTick, onTrade, handleKey }
 }
 
-module.exports = { create }
+module.exports = { create, VERSION }

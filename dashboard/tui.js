@@ -1,5 +1,7 @@
 'use strict'
 
+const VERSION = '1.0.0'
+
 require('dotenv').config()
 const blessed    = require('blessed')
 const wsClient   = require('./ws-client')
@@ -220,4 +222,5 @@ screen.key(['escape', 'C-c'], () => { screen.destroy(); process.exit(0) })
 // ── Boot ──────────────────────────────────────────────────────────────────────
 connect()
 screen.render()
+log.append(`{grey-fg}versions — tui@${VERSION}  log@${logPane.VERSION}  controls@${ctrlPane.VERSION}{/grey-fg}`, 'TICK')
 log.append(`{cyan-fg}Connecting to ${HOST}:${PORT}...{/cyan-fg}`, 'TICK')

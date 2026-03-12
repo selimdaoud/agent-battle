@@ -1,5 +1,7 @@
 'use strict'
 
+const VERSION = '1.0.0'
+
 const ss = require('simple-statistics')
 const { C } = require('./world')
 
@@ -353,4 +355,4 @@ async function computeSignals(prices, priceHistories, { backtest = false, interv
   return signals
 }
 
-module.exports = { computeSignals }
+module.exports = { computeSignals, VERSION }

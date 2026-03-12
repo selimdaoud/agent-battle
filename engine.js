@@ -1,5 +1,7 @@
 'use strict'
 
+const VERSION = '1.0.0'
+
 require('dotenv').config()
 const EventEmitter = require('events')
 const OpenAI       = require('openai')
@@ -162,4 +164,4 @@ async function runTick() {
   busy = false
 }
 
-module.exports = { world, emitter, start, stop, setInterval_, runTick, getIntervalMs: () => interval, getLastTickAt: () => lastTickAt }
+module.exports = { world, emitter, start, stop, setInterval_, runTick, getIntervalMs: () => interval, getLastTickAt: () => lastTickAt, VERSION }

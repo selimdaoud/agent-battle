@@ -1,5 +1,7 @@
 'use strict'
 
+const VERSION = '1.0.0'
+
 require('dotenv').config()
 const express             = require('express')
 const { WebSocketServer } = require('ws')
@@ -9,6 +11,7 @@ const path                = require('path')
 const engine              = require('./engine')
 const strategy            = require('./core/strategy')
 const World               = require('./core/world')
+const signals             = require('./core/signals')
 
 const DEBUG         = process.env.DEBUG === '1' || process.env.DEBUG === 'true'
 const SESSION_TRADES = parseInt(process.env.SESSION_TRADES) || 0
@@ -319,5 +322,7 @@ function _applyMegaChange(approved) {
   return { ok: true }
 }
 
-server.listen(process.env.PORT || 3000, () =>
-  console.log(`API listening on :${process.env.PORT || 3000}`))
+server.listen(process.env.PORT || 3000, () => {
+  console.log(`API listening on :${process.env.PORT || 3000}`)
+  log(`[BOOT] api@${VERSION}  engine@${engine.VERSION}  world@${World.VERSION}  strategy@${strategy.VERSION}  signals@${signals.VERSION}`)
+})
