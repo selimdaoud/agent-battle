@@ -58,11 +58,26 @@ async function tick(world, openai, emitter) {
     cachedSigs   = await signals.computeSignals(prices, world.getPriceHistory(), { interval: CANDLE_INTERVAL_LABEL })
     lastCandleAt = now
     emitter.emit('candle', { interval: CANDLE_INTERVAL_LABEL, signals: cachedSigs })
-    // Refresh macro trend once per day
-    if (now - _lastDailyFetch > 86400000) _refreshMacroTrend().catch(() => {})
+    // Refresh macro trend once per hour
+    if (now - _lastDailyFetch > 3600000) _refreshMacroTrend().catch(() => {})
   } else {
-    // Mid-candle: update live prices for P&L/stop-loss tracking only
+    // Mid-candle: update live prices, then run intra-candle stop-loss scan
     world.setLivePrices(prices)
+    const regime = cachedSigs?.[0]?.regime || 'ranging'
+    const stops  = strategy.intraStopLoss(world.getSnapshot(), prices, regime)
+    for (const { name, pair, pct, threshold } of stops) {
+      const d = {
+        action:       'SELL',
+        pair,
+        amount_usd:   0,
+        reasoning:    `[STOP] ${name} intra-candle stop-loss: ${pct.toFixed(1)}% on ${pair} exceeds -${threshold}%`,
+        signal_score: 0,
+        personality:  world.getSnapshot().agents[name]?.personality || ''
+      }
+      const result = world.applyDecision(name, d, prices)
+      emitter.emit('trade', { ...result, agent: name })
+      log(`[STOP] ${name} ${pair} stopped out at ${pct.toFixed(1)}% (threshold: -${threshold}%)`)
+    }
   }
 
   const sigs = cachedSigs
@@ -87,17 +102,20 @@ async function tick(world, openai, emitter) {
     }))
   }
 
-  // After-trade synthesis for MEGA: refresh personality immediately on BUY/SELL
-  const megaIdx = alive.findIndex(a => a.name === 'MEGA')
-  if (megaIdx !== -1 && decisions[megaIdx].action !== 'HOLD') {
-    decisions[megaIdx].personality = await synthesize(ctxs[megaIdx], openai)
-  }
-
   for (let i = 0; i < decisions.length; i++) {
     const d      = decisions[i]
     const name   = alive[i].name
     const result = world.applyDecision(name, d, prices)
-    emitter.emit('trade', { ...result, agent: name })
+
+    // After-trade synthesis for MEGA: refresh personality using post-trade context
+    if (name === 'MEGA' && d.action !== 'HOLD') {
+      const updatedCtx = world.getPromptContext('MEGA', sigs, prices)
+      d.personality = await synthesize(updatedCtx, openai)
+      // Patch snapshot so TUI reflects post-trade personality immediately
+      world._snapshot.agents['MEGA'].personality = d.personality
+    }
+
+    emitter.emit('trade', { ...result, decision: { ...result.decision, personality: d.personality }, agent: name })
     if (name === 'MEGA' && executor.REAL_TRADING) {
       log(`MEGA decision → ${d.action}${d.pair ? ' ' + d.pair : ''}${d.amount_usd ? ' $' + Math.round(d.amount_usd) : ''}`)
       const fill = await executor.execute(d, prices)
@@ -132,17 +150,28 @@ async function tick(world, openai, emitter) {
 }
 
 // ── Macro trend (BTC daily SMA200) ────────────────────────────────────────────
-let _macroTrend     = 'neutral'
+let _macroTrend     = { trend: 'neutral', bullCount: 0, bearCount: 0, neutralCount: 0, total: C.PAIRS.length, breadth: 0, btc: { trend: 'neutral', price: null, sma: null, pct: null, slope: null, slopeDir: 'flat', period: null } }
 let _lastDailyFetch = 0
 
 async function _refreshMacroTrend() {
   try {
-    const url  = 'https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=200'
-    const bars = await fetch(url, { signal: AbortSignal.timeout(6000) }).then(r => r.json())
-    const closes = bars.map(b => parseFloat(b[4]))
-    _macroTrend     = signals.computeMacroTrend(closes)
-    _lastDailyFetch = Date.now()
-    log(`Macro trend: ${_macroTrend.toUpperCase()} (BTC vs ${closes.length >= 200 ? 'SMA200' : 'SMA50'})`)
+    const results = await Promise.all(
+      C.PAIRS.map(async pair => {
+        try {
+          const url    = `https://api.binance.com/api/v3/klines?symbol=${pair}&interval=1d&limit=210`
+          const bars   = await fetch(url, { signal: AbortSignal.timeout(6000) }).then(r => r.json())
+          return [pair, bars.map(b => parseFloat(b[4]))]
+        } catch {
+          return [pair, []]
+        }
+      })
+    )
+    const closesByPair = Object.fromEntries(results)
+    _macroTrend        = signals.computeMacroTrend(closesByPair)
+    _lastDailyFetch    = Date.now()
+    const { trend, bullCount, bearCount, neutralCount, btc } = _macroTrend
+    const btcStr = btc?.pct != null ? `  BTC ${btc.pct > 0 ? '+' : ''}${btc.pct}% vs SMA${btc.period}  slope: ${btc.slopeDir}` : ''
+    log(`Macro trend: ${trend.toUpperCase()} (${bullCount}▲ ${bearCount}▼ ${neutralCount}~${btcStr})`)
   } catch (err) {
     log(`Macro trend fetch failed: ${err.message}`)
   }
@@ -204,6 +233,19 @@ function stop() {
   world._snapshot.running = false
 }
 
+/** Resolves when no tick is in flight. Max wait: 30s. */
+function waitIdle() {
+  if (!busy) return Promise.resolve()
+  return new Promise(resolve => {
+    const deadline = Date.now() + 30000
+    const check = () => {
+      if (!busy || Date.now() > deadline) return resolve()
+      setTimeout(check, 100)
+    }
+    setTimeout(check, 100)
+  })
+}
+
 function setInterval_(ms) {
   interval = ms
   if (timer) { stop(); start() }
@@ -222,4 +264,4 @@ async function runTick() {
   busy = false
 }
 
-module.exports = { world, emitter, start, stop, setInterval_, runTick, getIntervalMs: () => interval, getLastTickAt: () => lastTickAt, getMacroTrend: () => _macroTrend, VERSION }
+module.exports = { world, emitter, start, stop, waitIdle, setInterval_, runTick, getIntervalMs: () => interval, getLastTickAt: () => lastTickAt, getMacroTrend: () => _macroTrend, getOpenAI: () => openai, VERSION }

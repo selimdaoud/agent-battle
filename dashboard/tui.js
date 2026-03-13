@@ -1,6 +1,6 @@
 'use strict'
 
-const VERSION = '1.0.1'
+const VERSION = '1.0.3'
 
 require('dotenv').config()
 const blessed    = require('blessed')
@@ -13,6 +13,8 @@ const ctrlPane   = require('./panes/controls')
 const HOST  = process.env.ABG_HOST  || 'localhost'
 const PORT  = process.env.ABG_PORT  || 3000
 const TOKEN = process.env.ABG_TOKEN || process.env.WS_TOKEN || ''
+
+const aiChatPane = require('./panes/ai-chat')
 
 // ── Screen ────────────────────────────────────────────────────────────────────
 const screen = blessed.screen({
@@ -101,6 +103,74 @@ function showProposal(data) {
   screen.render()
 }
 
+// ── Shutdown confirmation overlay ─────────────────────────────────────────────
+const shutdownBox = blessed.box({
+  parent:  screen,
+  top:     'center',
+  left:    'center',
+  width:   52,
+  height:  7,
+  label:   ' ⚠ ENGINE SHUTDOWN ',
+  border:  { type: 'line' },
+  style:   { border: { fg: 'red', bold: true }, label: { fg: 'red', bold: true }, bg: 'yellow', fg: 'red' },
+  tags:    true,
+  hidden:  true
+})
+
+blessed.text({
+  parent:  shutdownBox,
+  top:     1,
+  left:    1,
+  tags:    true,
+  style:   { bg: 'yellow' },
+  content: '{red-fg}{bold}Type SHUTDOWN and press Enter to confirm:{/bold}{/red-fg}'
+})
+
+blessed.text({
+  parent:  shutdownBox,
+  bottom:  0,
+  left:    1,
+  tags:    true,
+  style:   { bg: 'yellow' },
+  content: '{red-fg}[Esc] Cancel{/red-fg}'
+})
+
+const shutdownInput = blessed.textbox({
+  parent:       shutdownBox,
+  bottom:       2,
+  left:         1,
+  right:        1,
+  height:       1,
+  inputOnFocus: true,
+  style:        { fg: 'red', bold: true, bg: 'yellow' }
+})
+
+shutdownInput.key('enter', () => {
+  const val = shutdownInput.getValue().trim()
+  if (val === 'SHUTDOWN') {
+    shutdownBox.hide()
+    screen.render()
+    clientRef.current?.send({ type: 'COMMAND', command: 'shutdown' })
+    setTimeout(() => { screen.destroy(); process.exit(0) }, 500)
+  } else {
+    shutdownInput.clearValue()
+    screen.render()
+  }
+})
+
+function openShutdown() {
+  shutdownBox.show()
+  shutdownBox.setFront()
+  shutdownInput.clearValue()
+  shutdownInput.focus()
+  screen.render()
+}
+
+function closeShutdown() {
+  shutdownBox.hide()
+  screen.render()
+}
+
 // ── Mutable WS reference — passed by object so controls always uses latest ───
 const clientRef = { current: null }
 
@@ -109,6 +179,7 @@ const agents   = agentPane.create(topLeft)
 const signals  = signalPane.create(topRight)
 const log      = logPane.create(botLeft)
 const controls = ctrlPane.create(botRight, clientRef, log, screen)
+const aiChat   = aiChatPane.create(screen, HOST, PORT, TOKEN)
 
 let lastPrices       = {}
 let pendingDecisions = []
@@ -198,6 +269,19 @@ function connect() {
 
 // ── Keyboard input ────────────────────────────────────────────────────────────
 screen.on('keypress', (ch, key) => {
+  // Escape is handled here for all contexts
+  if (key.name === 'escape') {
+    if (aiChat.isOpen())        { aiChat.handleEsc(); return }
+    if (!shutdownBox.hidden)    { closeShutdown();    return }
+    screen.destroy(); process.exit(0)
+  }
+
+  // Shutdown overlay intercepts all other keys when open
+  if (!shutdownBox.hidden) return
+
+  // AI chat modal intercepts all other keys when open
+  if (aiChat.isOpen()) return
+
   // Proposal overlay intercepts Y/N when visible
   if (!proposalBox.hidden) {
     if (ch === 'y' || ch === 'Y') {
@@ -211,6 +295,13 @@ screen.on('keypress', (ch, key) => {
     }
     return
   }
+
+  // SPACE opens AI assistant
+  if (ch === ' ') { aiChat.open(); return }
+
+  // Q opens shutdown confirmation
+  if (ch === 'q' || ch === 'Q') { openShutdown(); return }
+
   controls.handleKey(screen, ch, key, {
     toggleSignals:      () => signals.toggleCompact(),
     cycleLog:           () => log.cycleFilter(),
@@ -222,10 +313,10 @@ screen.on('keypress', (ch, key) => {
   })
 })
 
-screen.key(['escape', 'C-c'], () => { screen.destroy(); process.exit(0) })
+screen.key('C-c', () => { screen.destroy(); process.exit(0) })
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 connect()
 screen.render()
-log.append(`{grey-fg}versions — tui@${VERSION}  log@${logPane.VERSION}  controls@${ctrlPane.VERSION}  signals@${signalPane.VERSION}{/grey-fg}`, 'TICK')
+log.append(`{grey-fg}versions — tui@${VERSION}  log@${logPane.VERSION}  controls@${ctrlPane.VERSION}  signals@${signalPane.VERSION}  ai-chat@${aiChatPane.VERSION}{/grey-fg}`, 'TICK')
 log.append(`{cyan-fg}Connecting to ${HOST}:${PORT}...{/cyan-fg}`, 'TICK')

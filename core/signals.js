@@ -1,6 +1,6 @@
 'use strict'
 
-const VERSION = '1.0.1'
+const VERSION = '1.0.3'
 
 const ss = require('simple-statistics')
 const { C } = require('./world')
@@ -356,22 +356,68 @@ async function computeSignals(prices, priceHistories, { backtest = false, interv
 }
 
 /**
- * computeMacroTrend(dailyCloses) → 'bull' | 'bear' | 'neutral'
+ * _singleTrend(closes) → { trend, price, sma, pct, slope, slopeDir, period }
  *
- * Uses BTC daily closing prices to classify the macro market direction.
- * Primary signal: price vs 200-day SMA.  Falls back to 50-day SMA if < 200 bars available.
- * A ±2% buffer around the SMA prevents flip-flopping near the line.
+ * Evaluates one pair's macro direction: price vs SMA + slope confirmation.
  */
-function computeMacroTrend(dailyCloses) {
-  if (dailyCloses.length < 20) return 'neutral'
-  const price  = dailyCloses[dailyCloses.length - 1]
-  const ref    = dailyCloses.length >= 200
-    ? mean(dailyCloses.slice(-200))
-    : mean(dailyCloses.slice(-50))
-  const pct = (price - ref) / ref
-  if (pct >  0.02) return 'bull'
-  if (pct < -0.02) return 'bear'
-  return 'neutral'
+function _singleTrend(closes) {
+  if (closes.length < 20) return { trend: 'neutral', price: null, sma: null, pct: null, slope: null, slopeDir: 'flat', period: null }
+
+  const price  = closes[closes.length - 1]
+  const period = closes.length >= 200 ? 200 : 50
+  const smaVal = mean(closes.slice(-period))
+  const pct    = (price - smaVal) / smaVal
+
+  const SLOPE_WINDOW = 10
+  let slope    = null
+  let slopeDir = 'flat'
+  if (closes.length >= period + SLOPE_WINDOW) {
+    const prevSma = mean(closes.slice(-(period + SLOPE_WINDOW), -SLOPE_WINDOW))
+    slope    = (smaVal - prevSma) / prevSma
+    slopeDir = slope >  0.001 ? 'rising'
+             : slope < -0.001 ? 'falling'
+             : 'flat'
+  }
+
+  let trend
+  if      (pct >  0.02 && slopeDir !== 'falling') trend = 'bull'
+  else if (pct < -0.02 && slopeDir !== 'rising')  trend = 'bear'
+  else                                             trend = 'neutral'
+
+  return { trend, price, sma: parseFloat(smaVal.toFixed(2)), pct: parseFloat((pct * 100).toFixed(2)), slope: slope !== null ? parseFloat((slope * 100).toFixed(3)) : null, slopeDir, period }
+}
+
+/**
+ * computeMacroTrend(closesByPair) → { trend, bullCount, bearCount, neutralCount, total, breadth, btc }
+ *
+ * Evaluates macro direction using all platform pairs (market breadth).
+ * closesByPair: { BTCUSDT: [...closes], ETHUSDT: [...closes], ... }
+ * breadth = (bullCount - bearCount) / total ∈ [-1, +1]
+ * trend: bull if breadth > 0.2, bear if < -0.2, else neutral.
+ * btc: BTC-specific details for display.
+ */
+function computeMacroTrend(closesByPair) {
+  const pairs = Object.keys(closesByPair)
+  let bullCount = 0, bearCount = 0, neutralCount = 0
+
+  for (const pair of pairs) {
+    const t = _singleTrend(closesByPair[pair]).trend
+    if      (t === 'bull') bullCount++
+    else if (t === 'bear') bearCount++
+    else                   neutralCount++
+  }
+
+  const total   = pairs.length || 1
+  const breadth = parseFloat(((bullCount - bearCount) / total).toFixed(2))
+
+  let trend
+  if      (breadth >  0.2) trend = 'bull'
+  else if (breadth < -0.2) trend = 'bear'
+  else                     trend = 'neutral'
+
+  const btc = _singleTrend(closesByPair['BTCUSDT'] || [])
+
+  return { trend, bullCount, bearCount, neutralCount, total, breadth, btc }
 }
 
 module.exports = { computeSignals, computeMacroTrend, VERSION }

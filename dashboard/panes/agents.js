@@ -5,8 +5,9 @@ const VERSION = '1.0.2'
 const blessed = require('blessed')
 const { C }   = require('../../core/world')
 
-const INITIAL_CAPITAL = C.INITIAL_CAPITAL
-const SIM_START       = INITIAL_CAPITAL * 3  // $30,000 — A/B/G only (MEGA is always excluded)
+const INITIAL_CAPITAL      = C.INITIAL_CAPITAL
+const MEGA_INITIAL_CAPITAL = C.MEGA_SIM_CAPITAL
+const SIM_START            = INITIAL_CAPITAL * 3  // $30,000 — A/B/G only (MEGA is always excluded)
 
 function create(parent) {
   const boxes = {}
@@ -137,7 +138,7 @@ function create(parent) {
           const mv    = totalValue(megaLiveAgent, prices)
           const mc    = megaLiveAgent.capital
           const mcr   = mv - mc
-          const mpnl  = ((mv - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100).toFixed(1)
+          const mpnl  = ((mv - MEGA_INITIAL_CAPITAL) / MEGA_INITIAL_CAPITAL * 100).toFixed(1)
           const mpCol = mpnl >= 0 ? 'green' : 'red'
           const mpSign = mpnl >= 0 ? '+' : ''
           return `   {yellow-fg}{bold}MEGA LIVE{/bold}: $${fmt(mv)}  P&L:{/yellow-fg}{${mpCol}-fg}{bold}${mpSign}${mpnl}%{/bold}{/${mpCol}-fg}  USDT:$${fmt(mc)}  Crypto:$${fmt(mcr)}{/yellow-fg}`
@@ -166,7 +167,8 @@ function create(parent) {
 
       const rank    = ranked.findIndex(a => a.name === name) + 1
       const total   = totalValue(agent, prices)
-      const pnl     = ((total - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100).toFixed(1)
+      const startCap = name === 'MEGA' ? MEGA_INITIAL_CAPITAL : INITIAL_CAPITAL
+      const pnl     = ((total - startCap) / startCap * 100).toFixed(1)
       const pnlSign = pnl >= 0 ? '+' : ''
       const pnlCol  = pnl >= 0 ? 'green' : 'red'
 

@@ -1,6 +1,6 @@
 'use strict'
 
-const VERSION = '1.0.3'
+const VERSION = '1.0.4'
 
 const blessed = require('blessed')
 
@@ -39,7 +39,7 @@ function create(parent, clientRef, logPane, screen) {
   let sellCounts    = { ALPHA: 0, BETA: 0, GAMMA: 0 }
   let sessionTrades = 0
   let megaOnline    = false
-  let macroTrend    = 'neutral'
+  let macroTrend    = null
   let proposalReady = false
 
   const helpText = [
@@ -58,7 +58,10 @@ function create(parent, clientRef, logPane, screen) {
     '{bold}[L]{/bold}         Cycle log filter',
     '{bold}[TAB]{/bold}       Cycle agent filter A/B/G/M/All',
     '{bold}[R]{/bold}         Reconnect WebSocket',
-    '{bold}[Q]{/bold}         Quit (sim keeps running)',
+    '{bold}[SPACE]{/bold}     AI Assistant',
+    '',
+    '{bold}[Esc]{/bold}       Quit TUI (sim keeps running)',
+    '{bold}[Q]{/bold}         Shutdown simulation (confirm)',
   ].join('\n')
 
   box.setContent(helpText)
@@ -78,9 +81,10 @@ function create(parent, clientRef, logPane, screen) {
       ? `{green-fg}▶ RUNNING{/green-fg}  Next: ${nextTickSecs}s`
       : '{yellow-fg}⏸ PAUSED  [P] to start{/yellow-fg}'
 
-    const macroStr = macroTrend === 'bull'
+    const macroVal = macroTrend?.trend || macroTrend || 'neutral'
+    const macroStr = macroVal === 'bull'
       ? '{green-fg}↑ BULL{/green-fg}'
-      : macroTrend === 'bear'
+      : macroVal === 'bear'
         ? '{red-fg}↓ BEAR{/red-fg}'
         : '{grey-fg}~ NEUTRAL{/grey-fg}'
 
@@ -244,11 +248,6 @@ function create(parent, clientRef, logPane, screen) {
       case 'r': case 'R':
         callbacks.reconnect && callbacks.reconnect()
         logPane && logPane.append('{cyan-fg}Reconnecting...{/cyan-fg}', 'ERROR')
-        break
-
-      case 'q': case 'Q':
-        screen.destroy()
-        process.exit(0)
         break
     }
   }

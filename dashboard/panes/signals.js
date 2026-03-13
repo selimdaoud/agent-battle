@@ -1,6 +1,6 @@
 'use strict'
 
-const VERSION = '1.0.0'
+const VERSION = '1.0.2'
 
 const blessed = require('blessed')
 const { C }   = require('../../core/world')
@@ -50,14 +50,37 @@ function create(parent) {
   return { update, toggleCompact }
 }
 
-function formatMacroTrend(trend) {
-  if (!trend) return ''
-  const label = trend === 'bull'
+function formatMacroTrend(macro) {
+  if (!macro) return ''
+
+  const label = macro.trend === 'bull'
     ? '{green-fg}↑ BULL{/green-fg}'
-    : trend === 'bear'
+    : macro.trend === 'bear'
       ? '{red-fg}↓ BEAR{/red-fg}'
       : '{grey-fg}~ NEUTRAL{/grey-fg}'
-  return `{bold}BTC Macro:{/bold} ${label}  {grey-fg}(SMA200){/grey-fg}\n${'─'.repeat(40)}`
+
+  // Breadth-based (new format)
+  if (macro.btc !== undefined) {
+    const { bullCount, bearCount, neutralCount, total, btc } = macro
+    const breadthStr = `  {green-fg}${bullCount}▲{/green-fg} {red-fg}${bearCount}▼{/red-fg} {grey-fg}${neutralCount}~{/grey-fg}/${total}`
+    let btcStr = ''
+    if (btc && btc.price != null) {
+      const pctSign    = btc.pct >= 0 ? '+' : ''
+      const slopeColor = btc.slopeDir === 'rising' ? 'green' : btc.slopeDir === 'falling' ? 'red' : 'grey'
+      btcStr = `BTC $${Math.round(btc.price).toLocaleString()}  SMA${btc.period} $${Math.round(btc.sma).toLocaleString()}  {bold}${pctSign}${btc.pct}%{/bold}  slope:{${slopeColor}-fg}${btc.slopeDir}{/${slopeColor}-fg}`
+    }
+    return `{bold}Market:{/bold} ${label}${breadthStr}\n${btcStr}\n${'─'.repeat(52)}`
+  }
+
+  // Legacy BTC-only format (backward compat)
+  const { trend, price, sma, pct, slopeDir, period } = macro
+  const slopeColor = slopeDir === 'rising' ? 'green' : slopeDir === 'falling' ? 'red' : 'grey'
+  const pctSign    = pct != null && pct >= 0 ? '+' : ''
+  const priceStr   = price  != null ? `  BTC $${Math.round(price).toLocaleString()}` : ''
+  const smaStr     = sma    != null ? `  SMA${period} $${Math.round(sma).toLocaleString()}` : ''
+  const pctStr     = pct    != null ? `  {bold}${pctSign}${pct}%{/bold}` : ''
+  const slopeStr   = slopeDir       ? `  slope: {${slopeColor}-fg}${slopeDir}{/${slopeColor}-fg}` : ''
+  return `{bold}BTC Macro:{/bold} ${label}${priceStr}${smaStr}${pctStr}${slopeStr}\n${'─'.repeat(52)}`
 }
 
 function formatSignal(s, compact) {

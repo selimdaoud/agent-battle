@@ -1,6 +1,6 @@
 'use strict'
 
-const VERSION = '1.0.6'
+const VERSION = '1.0.8'
 
 require('dotenv').config()
 const express             = require('express')
@@ -239,6 +239,10 @@ function handleCommand(msg) {
       return { ok: true }
     }
     case 'apply_change': return _applyMegaChange(msg.params?.approved)
+    case 'shutdown':
+      log('[SHUTDOWN] Shutdown in progress...')
+      setImmediate(() => shutdown('TUI'))
+      return { ok: true }
     default:
       return engine.world.applyCommand(msg)
   }
@@ -344,7 +348,256 @@ function _applyMegaChange(approved) {
   return { ok: true }
 }
 
+// ── AI Assistant ──────────────────────────────────────────────────────────────
+const MEGA_CONFIG_FILE = path.join(__dirname, 'agents/mega-config.json')
+const C = World.C
+
+const AI_ANSWER_SYSTEM = `You are an assistant embedded in agent-battle-gpt, a live crypto trading simulation platform.
+Answer questions about the platform's metrics, agents, signals, positions, and market conditions.
+Be concise and direct. Use the platform context provided to give accurate, specific answers.
+Do not speculate beyond the data. If information is not in the context, say so.`
+
+const AI_PLANNER_SYSTEM = `You are a context planner for agent-battle-gpt, a live crypto trading simulation.
+Given a user question, select the minimum set of context modules needed to answer it accurately.
+Reply with ONLY a valid JSON array of module names from this list — no explanation, no markdown:
+
+agent_states        - capital, cash, holdings with unrealized P&L per agent
+agent_personalities - current personality/mindset text per agent
+agent_strategies    - trading thresholds, regime overrides, stop-loss config per agent
+last_decisions      - most recent decision reasoning per agent (why they bought/held/sold)
+trade_history       - last 10 trades with price, P&L, reasoning
+market_signals      - per-pair signal scores, RSI, momentum, regime, price
+macro_trend         - bull/bear market breadth across all pairs, BTC vs SMA
+survival_status     - survival scores, threat status, respawn counts
+session_ranking     - current standings, who is winning, sell counts
+mega_config         - MEGA agent live configuration (strategy params, signal weights)`
+
+const VALID_MODULES = new Set([
+  'agent_states', 'agent_personalities', 'agent_strategies', 'last_decisions',
+  'trade_history', 'market_signals', 'macro_trend', 'survival_status',
+  'session_ranking', 'mega_config'
+])
+
+function _buildContextModules() {
+  const snap   = engine.world.getSnapshot()
+  const macro  = engine.getMacroTrend()
+  const sigs   = snap.lastSignals || []
+  const prices = {}
+  sigs.forEach(s => { prices[s.pair] = s.price })
+
+  const modules = {}
+
+  // agent_states
+  modules.agent_states = Object.entries(snap.agents || {}).map(([name, a]) => {
+    const holdings = Object.entries(a.holdings || {})
+      .filter(([, q]) => q > 0)
+      .map(([p, q]) => {
+        const entry = a.entryPrices?.[p]
+        const px    = prices[p]
+        const val   = px ? (q * px).toFixed(0) : '?'
+        const pct   = (entry && px) ? ((px - entry) / entry * 100).toFixed(1) + '%' : '?'
+        return `${p} val=$${val} unrealized=${pct}`
+      }).join(', ') || 'none'
+    const tv = a.capital + Object.entries(a.holdings || {})
+      .reduce((s, [p, q]) => s + (prices[p] ? q * prices[p] : 0), 0)
+    return `${name} [${a.archetype || '?'}]: total=$${tv.toFixed(0)} cash=$${a.capital.toFixed(0)} holdings=[${holdings}]`
+  }).join('\n')
+
+  // agent_personalities
+  modules.agent_personalities = Object.entries(snap.agents || {})
+    .map(([name, a]) => `${name}: ${a.personality || '(no personality yet)'}`)
+    .join('\n\n')
+
+  // agent_strategies
+  const stratLines = ['ALPHA', 'BETA', 'GAMMA'].map(name => {
+    const s = C.STRATEGY[name]
+    if (!s) return `${name}: (no strategy config)`
+    const overrides = Object.entries(s.regime_overrides || {})
+      .map(([r, v]) => `    ${r}: ${JSON.stringify(v)}`).join('\n')
+    const base = { ...s }
+    delete base.regime_overrides
+    return `${name} [${C.ARCHETYPES[name]?.label}]:\n  base: ${JSON.stringify(base)}\n  regime_overrides:\n${overrides}`
+  })
+  let megaStratStr = ''
+  try {
+    const cfg = JSON.parse(fs.readFileSync(MEGA_CONFIG_FILE, 'utf8'))
+    megaStratStr = `MEGA [${cfg.archetype?.label || 'Autonomous'}]:\n  strategy: ${JSON.stringify(cfg.strategy)}\n  regime_overrides: ${JSON.stringify(cfg.regime_overrides)}`
+  } catch (_) {}
+  modules.agent_strategies = [...stratLines, megaStratStr].filter(Boolean).join('\n\n')
+
+  // last_decisions — last DECISION tick per agent from DB
+  const decisionLines = []
+  try {
+    const db = engine.world._db
+    for (const name of ['ALPHA', 'BETA', 'GAMMA', 'MEGA']) {
+      const row = db.prepare(
+        "SELECT payload FROM ticks WHERE agent=? AND type='DECISION' ORDER BY id DESC LIMIT 1"
+      ).get(name)
+      if (row) {
+        const d = JSON.parse(row.payload)
+        decisionLines.push(
+          `${name}: action=${d.action || '?'} pair=${d.pair || '-'} score=${d.signal_score?.toFixed(2) ?? '?'}\n  reasoning: ${d.reasoning || '(none)'}`
+        )
+      }
+    }
+  } catch (_) {}
+  modules.last_decisions = decisionLines.join('\n\n') || '(no decisions yet)'
+
+  // trade_history — last 10 TRADE ticks
+  try {
+    const db   = engine.world._db
+    const rows = db.prepare(
+      "SELECT ts, agent, payload FROM ticks WHERE type='TRADE' ORDER BY id DESC LIMIT 10"
+    ).all()
+    modules.trade_history = rows.map(r => {
+      const t   = JSON.parse(r.payload)
+      const fin = t.action === 'SELL'
+        ? ` proceeds=$${t.proceeds_or_cost?.toFixed(0)}`
+        : ` cost=$${t.proceeds_or_cost?.toFixed(0)}`
+      return `[${new Date(r.ts).toISOString().slice(11, 19)}] ${r.agent} ${t.action} ${t.pair || '-'} qty=${t.qty?.toFixed(2) ?? '?'} @$${t.price?.toFixed(2) ?? '?'}${fin}`
+    }).join('\n') || '(no trades yet)'
+  } catch (_) {
+    modules.trade_history = '(unavailable)'
+  }
+
+  // market_signals
+  modules.market_signals = sigs.map(s =>
+    `${s.pair}: score=${s.signal_score.toFixed(2)} RSI=${s.rsi_14.toFixed(0)} mom1h=${s.momentum_1h.toFixed(2)} regime=${s.regime} price=$${s.price?.toFixed(2)}`
+  ).join('\n') || '(no signals yet)'
+
+  // macro_trend
+  let macroStr = 'unknown'
+  if (macro?.trend) {
+    const breadthStr = macro.btc !== undefined
+      ? ` — ${macro.bullCount}▲ ${macro.bearCount}▼ ${macro.neutralCount}~/${macro.total} pairs`
+      : ''
+    const btcDetail = macro.btc ?? macro
+    const btcStr = btcDetail?.pct != null
+      ? `  BTC $${Math.round(btcDetail.price)} vs SMA${btcDetail.period} $${Math.round(btcDetail.sma)} (${btcDetail.pct >= 0 ? '+' : ''}${btcDetail.pct}%) slope: ${btcDetail.slopeDir}`
+      : ''
+    macroStr = `${macro.trend.toUpperCase()}${breadthStr}${btcStr}`
+  }
+  modules.macro_trend = `Round: ${snap.round}\n${macroStr}`
+
+  // survival_status
+  modules.survival_status = Object.entries(snap.agents || {}).map(([name, a]) =>
+    `${name}: score=${(a.survivalScore || 0).toFixed(3)} threatened=${a.threatened || false} alive=${a.alive} respawns=${a.respawnCount} consecutiveLastPlace=${a.consecutiveLastPlace || 0}`
+  ).join('\n')
+
+  // session_ranking
+  const ranked = Object.entries(snap.agents || {})
+    .map(([name, a]) => {
+      const tv = a.capital + Object.entries(a.holdings || {})
+        .reduce((s, [p, q]) => s + (prices[p] ? q * prices[p] : 0), 0)
+      return { name, tv }
+    })
+    .sort((a, b) => b.tv - a.tv)
+  modules.session_ranking = ranked.map((r, i) =>
+    `#${i + 1} ${r.name}: $${r.tv.toFixed(0)} | sells: ${sellCounts[r.name] ?? 0}`
+  ).join('\n')
+
+  // mega_config
+  try {
+    const cfg = JSON.parse(fs.readFileSync(MEGA_CONFIG_FILE, 'utf8'))
+    modules.mega_config = `strategy: ${JSON.stringify(cfg.strategy)}\nregime_overrides: ${JSON.stringify(cfg.regime_overrides)}\nsignal_weights: ${JSON.stringify(cfg.signal_weights)}`
+  } catch (_) {
+    modules.mega_config = '(unavailable)'
+  }
+
+  return modules
+}
+
+app.post('/ask', checkToken, async (req, res) => {
+  const question = (req.body?.question || '').trim()
+  if (!question) return res.status(400).json({ ok: false, error: 'No question provided' })
+
+  log(`[ASK] Question: "${question}"`)
+
+  const ac = new AbortController()
+  res.on('close', () => {
+    if (res.writableEnded) return
+    if (ac.signal.aborted) return
+    log('[ASK] Client disconnected — aborting')
+    ac.abort()
+  })
+
+  try {
+    const openai = engine.getOpenAI()
+    if (!openai) {
+      log('[ASK] OpenAI not available (no API key)')
+      return res.status(503).json({ ok: false, error: 'OpenAI not available (no API key)' })
+    }
+
+    // ── Step 1: context planning (gpt-4o-mini) ────────────────────────────────
+    let selectedModules
+    try {
+      const planCompletion = await openai.chat.completions.create({
+        model:       'gpt-4o-mini',
+        max_tokens:  80,
+        temperature: 0,
+        messages: [
+          { role: 'system', content: AI_PLANNER_SYSTEM },
+          { role: 'user',   content: question }
+        ]
+      }, { signal: ac.signal })
+      const raw = planCompletion.choices[0].message.content.trim()
+      const parsed = JSON.parse(raw)
+      selectedModules = parsed.filter(m => VALID_MODULES.has(m))
+    } catch (_) {
+      selectedModules = ['agent_states', 'market_signals', 'macro_trend', 'session_ranking']
+    }
+    if (!selectedModules.length) {
+      selectedModules = ['agent_states', 'market_signals', 'macro_trend', 'session_ranking']
+    }
+    log(`[ASK] Modules selected: ${selectedModules.join(', ')}`)
+
+    // ── Step 2: assemble context + answer (gpt-4o) ────────────────────────────
+    const allModules = _buildContextModules()
+    const contextStr = selectedModules
+      .map(m => `=== ${m.toUpperCase()} ===\n${allModules[m]}`)
+      .join('\n\n')
+    log(`[ASK] Context size: ~${contextStr.length} chars — sending step 2`)
+
+    const completion = await openai.chat.completions.create({
+      model:      'gpt-4o',
+      max_tokens: 500,
+      messages: [
+        { role: 'system', content: AI_ANSWER_SYSTEM + '\n\n' + contextStr },
+        { role: 'user',   content: question }
+      ]
+    }, { signal: ac.signal })
+
+    const answer = completion.choices[0].message.content.trim()
+    log(`[ASK] Answer received (${answer.length} chars, ${completion.usage?.total_tokens ?? '?'} tokens)`)
+    res.json({ answer })
+  } catch (err) {
+    if (ac.signal.aborted) { log('[ASK] Aborted (client cancelled)'); return }
+    log(`[ASK] Error: ${err.message}`)
+    if (!res.headersSent) res.status(500).json({ ok: false, error: err.message })
+  }
+})
+
 server.listen(process.env.PORT || 3000, () => {
   console.log(`API listening on :${process.env.PORT || 3000}`)
   log(`[BOOT] api@${VERSION}  engine@${engine.VERSION}  world@${World.VERSION}  strategy@${strategy.VERSION}  signals@${signals.VERSION}`)
 })
+
+// ── Graceful shutdown ──────────────────────────────────────────────────────────
+async function shutdown(signal) {
+  log(`[SHUTDOWN] ${signal} — stopping engine`)
+  engine.stop()
+  log(`[SHUTDOWN] Waiting for in-flight tick to complete...`)
+  await engine.waitIdle()
+  log(`[SHUTDOWN] Engine idle — terminating ${wss.clients.size} WS client(s)`)
+  for (const ws of wss.clients) ws.terminate()
+  log('[SHUTDOWN] Closing HTTP server')
+  server.close(() => {
+    log('[SHUTDOWN] Done — process exit')
+    process.exit(0)
+  })
+  // Force exit after 5s in case server.close() hangs
+  setTimeout(() => { log('[SHUTDOWN] Forced exit after timeout'); process.exit(0) }, 5000)
+}
+
+process.on('SIGINT',  () => shutdown('SIGINT'))
+process.on('SIGTERM', () => shutdown('SIGTERM'))

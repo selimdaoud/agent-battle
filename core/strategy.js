@@ -423,7 +423,7 @@ function megaDecide(ctx, smap, threatened) {
   if (candidates.length > 0) {
     const s      = candidates[0]
     const amount = buyAmount(s.pair, s.signal_score, ctx, cfg)
-    if (amount < 50) return holdDecision('MEGA: insufficient capital for sizing')
+    if (amount < Math.max(ctx.capital * 0.005, 1)) return holdDecision('MEGA: insufficient capital for sizing')
     return {
       action:       'BUY',
       pair:         s.pair,
@@ -479,4 +479,44 @@ function decide(ctx) {
   return decision
 }
 
-module.exports = { decide, reloadMegaConfig, VERSION }
+/**
+ * intraStopLoss(snapshot, prices, regime) → [{ name, pair, qty, pct, threshold }]
+ *
+ * Lightweight intra-candle stop-loss scan — no signals needed.
+ * Only checks agents with sell_loss_pct configured (GAMMA and MEGA).
+ * Called on every mid-candle tick for fast stop-loss reaction.
+ */
+function intraStopLoss(snapshot, prices, regime) {
+  const triggered = []
+
+  for (const [name, agent] of Object.entries(snapshot.agents)) {
+    if (!agent.alive) continue
+
+    let stopPct = null
+    if (name === 'GAMMA') {
+      const base = C.STRATEGY.GAMMA
+      const ov   = base.regime_overrides[regime] || {}
+      stopPct = ov.sell_loss_pct ?? base.sell_loss_pct
+    } else if (name === 'MEGA') {
+      const base = megaConfig.strategy
+      const ov   = (megaConfig.regime_overrides || {})[regime] || {}
+      stopPct = ov.sell_loss_pct ?? base.sell_loss_pct
+    }
+    // ALPHA and BETA: no fixed stop-loss % — exit via signal/flow logic at candle close
+
+    if (stopPct == null) continue
+
+    for (const [pair, qty] of Object.entries(agent.holdings)) {
+      if (qty <= 0) continue
+      const entry = agent.entryPrices[pair]
+      const now   = prices[pair]
+      if (!entry || !now) continue
+      const pct = (now - entry) / entry * 100
+      if (pct < -stopPct) triggered.push({ name, pair, qty, pct, threshold: stopPct })
+    }
+  }
+
+  return triggered
+}
+
+module.exports = { decide, intraStopLoss, reloadMegaConfig, VERSION }

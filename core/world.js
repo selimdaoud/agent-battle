@@ -1,6 +1,6 @@
 'use strict'
 
-const VERSION = '1.0.3'
+const VERSION = '1.0.4'
 
 require('dotenv').config()
 const fs       = require('fs')
@@ -25,6 +25,7 @@ const _BETA_OVERSOLD_RSI        = 40    // RSI below which BETA considers an ass
 
 const C = {
   INITIAL_CAPITAL:           parseInt(process.env.INITIAL_CAPITAL) || 10000,
+  MEGA_SIM_CAPITAL:          parseInt(process.env.MEGA_INITIAL_CAPITAL) || 500,
   BANKRUPTCY_FLOOR:          3000,
   MAX_POSITIONS:             5,
   MAX_POSITION_PCT:          0.30,
@@ -425,12 +426,25 @@ class World {
     // Ensure MEGA is always present even on a DB rebuilt from older sessions
     if (!agents.MEGA) agents.MEGA = _defaultAgent('MEGA')
 
+    // Restore lastSignals from the most recent round's SIGNAL ticks so the TUI
+    // can price holdings immediately on restart without waiting for the first tick
+    const lastSignalRound = this._db.prepare(
+      "SELECT round FROM ticks WHERE type='SIGNAL' ORDER BY id DESC LIMIT 1"
+    ).get()
+    let lastSignals = []
+    if (lastSignalRound) {
+      const sigRows = this._db.prepare(
+        "SELECT payload FROM ticks WHERE type='SIGNAL' AND round=? ORDER BY id ASC"
+      ).all(lastSignalRound.round)
+      lastSignals = sigRows.map(r => JSON.parse(r.payload))
+    }
+
     this._snapshot = {
       round,
       running: false,
       agents,
       priceHistory,
-      lastSignals:   [],
+      lastSignals,
       lastEventId:   lastEvent ? lastEvent.id : 0,
       totalInjected:  C.INITIAL_CAPITAL * 3 + totalRespawnInjected,
       totalRecovered
