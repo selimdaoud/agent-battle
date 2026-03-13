@@ -1,6 +1,6 @@
 'use strict'
 
-const VERSION = '1.0.0'
+const VERSION = '1.0.1'
 
 require('dotenv').config()
 const blessed    = require('blessed')
@@ -110,8 +110,9 @@ const signals  = signalPane.create(topRight)
 const log      = logPane.create(botLeft)
 const controls = ctrlPane.create(botRight, clientRef, log, screen)
 
-let lastPrices      = {}
+let lastPrices       = {}
 let pendingDecisions = []
+let lastSnap         = null
 
 // ── WebSocket handlers ────────────────────────────────────────────────────────
 function buildHandlers() {
@@ -127,13 +128,14 @@ function buildHandlers() {
       screen.render()
     },
     onTick(snap) {
+      lastSnap = snap
       if (snap.lastSignals && snap.lastSignals.length) {
         lastPrices = {}
         snap.lastSignals.forEach(s => { lastPrices[s.pair] = s.price })
       }
       agents.update(snap, lastPrices, pendingDecisions)
       pendingDecisions = []
-      if (snap.lastSignals) signals.update(snap.lastSignals)
+      if (snap.lastSignals) signals.update(snap.lastSignals, snap.macroTrend)
       log.onTick(snap)
       controls.onTick(snap)
     },
@@ -210,10 +212,13 @@ screen.on('keypress', (ch, key) => {
     return
   }
   controls.handleKey(screen, ch, key, {
-    toggleSignals:   () => signals.toggleCompact(),
-    cycleLog:        () => log.cycleFilter(),
-    cycleAgentFilter:() => log.cycleAgentFilter(),
-    reconnect:       () => connect()
+    toggleSignals:      () => signals.toggleCompact(),
+    cycleLog:           () => log.cycleFilter(),
+    cycleAgentFilter:   () => log.cycleAgentFilter(),
+    reconnect:          () => connect(),
+    onRealTradingToggle:(enabled) => {
+      if (lastSnap) agents.update({ ...lastSnap, realTrading: enabled }, lastPrices, [])
+    }
   })
 })
 
@@ -222,5 +227,5 @@ screen.key(['escape', 'C-c'], () => { screen.destroy(); process.exit(0) })
 // ── Boot ──────────────────────────────────────────────────────────────────────
 connect()
 screen.render()
-log.append(`{grey-fg}versions — tui@${VERSION}  log@${logPane.VERSION}  controls@${ctrlPane.VERSION}{/grey-fg}`, 'TICK')
+log.append(`{grey-fg}versions — tui@${VERSION}  log@${logPane.VERSION}  controls@${ctrlPane.VERSION}  signals@${signalPane.VERSION}{/grey-fg}`, 'TICK')
 log.append(`{cyan-fg}Connecting to ${HOST}:${PORT}...{/cyan-fg}`, 'TICK')

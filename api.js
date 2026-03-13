@@ -1,6 +1,6 @@
 'use strict'
 
-const VERSION = '1.0.0'
+const VERSION = '1.0.6'
 
 require('dotenv').config()
 const express             = require('express')
@@ -12,6 +12,7 @@ const engine              = require('./engine')
 const strategy            = require('./core/strategy')
 const World               = require('./core/world')
 const signals             = require('./core/signals')
+const executor            = require('./core/executor')
 
 const DEBUG         = process.env.DEBUG === '1' || process.env.DEBUG === 'true'
 const SESSION_TRADES = parseInt(process.env.SESSION_TRADES) || 0
@@ -86,7 +87,7 @@ function broadcast(msg) {
 engine.emitter.on('tick', snap => {
   const intervalMs = engine.getIntervalMs()
   const lastTickAt = engine.getLastTickAt()
-  broadcast({ type: 'TICK', ...snap, intervalMs, nextTickAt: lastTickAt ? lastTickAt + intervalMs : null, sellCounts: { ...sellCounts }, sessionTrades: SESSION_TRADES })
+  broadcast({ type: 'TICK', ...snap, intervalMs, nextTickAt: lastTickAt ? lastTickAt + intervalMs : null, sellCounts: { ...sellCounts }, sessionTrades: SESSION_TRADES, realTrading: executor.REAL_TRADING, macroTrend: engine.getMacroTrend(), proposalReady: fs.existsSync(PROPOSED_FILE) })
 
   const agents = Object.values(snap.agents)
     .map(a => `${a.name} $${Math.round(a.capital)} pos:${Object.keys(a.holdings).length} score:${a.survivalScore.toFixed(3)}`)
@@ -181,7 +182,7 @@ wss.on('connection', (ws, req) => {
 
     if (msg.type === 'COMMAND') handleCommand(msg, ws)
   })
-  ws.send(JSON.stringify({ type: 'STATE', ...engine.world.getSnapshot() }))
+  ws.send(JSON.stringify({ type: 'STATE', ...engine.world.getSnapshot(), realTrading: executor.REAL_TRADING, sellCounts: { ...sellCounts }, sessionTrades: SESSION_TRADES, macroTrend: engine.getMacroTrend(), proposalReady: fs.existsSync(PROPOSED_FILE) }))
   if (eventLog.length) ws.send(JSON.stringify({ type: 'LOG_HISTORY', events: eventLog }))
 })
 
@@ -229,7 +230,14 @@ function handleCommand(msg) {
         })
       }
       return { ok: true }
-    case 'set_interval': engine.setInterval_(msg.params.ms); return { ok: true }
+    case 'set_interval':    engine.setInterval_(msg.params.ms); return { ok: true }
+    case 'set_real_trading': {
+      const enabled = Boolean(msg.params?.enabled)
+      executor.setRealTrading(enabled)
+      broadcast({ type: 'TICK', ...engine.world.getSnapshot(), intervalMs: engine.getIntervalMs(), nextTickAt: null, sellCounts: { ...sellCounts }, sessionTrades: SESSION_TRADES, realTrading: executor.REAL_TRADING, macroTrend: engine.getMacroTrend(), proposalReady: fs.existsSync(PROPOSED_FILE) })
+      log(`[CMD] MEGA real trading ${enabled ? 'ENABLED' : 'DISABLED'} via TUI`)
+      return { ok: true }
+    }
     case 'apply_change': return _applyMegaChange(msg.params?.approved)
     default:
       return engine.world.applyCommand(msg)
@@ -240,6 +248,17 @@ function handleCommand(msg) {
 const PROPOSED_FILE = path.join(__dirname, 'agents/mega-changes-proposed.json')
 const CONFIG_FILE   = path.join(__dirname, 'agents/mega-config.json')
 const HISTORY_FILE  = path.join(__dirname, 'sessions/change-history.json')
+
+function _broadcastProposalIfReady() {
+  if (!fs.existsSync(PROPOSED_FILE)) return
+  try {
+    const proposed = JSON.parse(fs.readFileSync(PROPOSED_FILE, 'utf8'))
+    if (proposed.proposals?.length) {
+      broadcast({ type: 'PROPOSAL', proposal: proposed.proposals[0], sessionsAnalyzed: proposed.sessionsAnalyzed })
+      log(`[PROPOSAL] Broadcast: ${proposed.proposals[0].field} ${proposed.proposals[0].current} → ${proposed.proposals[0].proposed}`)
+    }
+  } catch (_) {}
+}
 
 function _runPostSession(onDone) {
   const { spawn } = require('child_process')
@@ -256,6 +275,7 @@ function _runPostSession(onDone) {
     broadcast({ type: 'PIPELINE', status: code === 0 ? 'done' : 'error', message: summary })
     log(`[PIPELINE] ${summary}`)
 
+    _broadcastProposalIfReady()
     if (onDone) onDone()
   })
 }
@@ -319,6 +339,8 @@ function _applyMegaChange(approved) {
   }
 
   fs.writeFileSync(HISTORY_FILE, JSON.stringify(history, null, 2))
+  // Delete proposal file so the status bar clears and P key won't re-show a stale overlay
+  try { fs.unlinkSync(PROPOSED_FILE) } catch (_) {}
   return { ok: true }
 }
 

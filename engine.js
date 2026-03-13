@@ -1,6 +1,6 @@
 'use strict'
 
-const VERSION = '1.0.1'
+const VERSION = '1.0.6'
 
 require('dotenv').config()
 const EventEmitter = require('events')
@@ -10,6 +10,9 @@ const { C }        = require('./core/world')
 const signals      = require('./core/signals')
 const strategy     = require('./core/strategy')
 const { synthesize } = require('./core/agent')
+const executor       = require('./core/executor')
+
+const log = (...args) => console.log(new Date().toISOString(), '[ENGINE]', ...args)
 
 // ── Market price fetcher ───────────────────────────────────────────────────────
 async function fetchPrices(world) {
@@ -55,12 +58,20 @@ async function tick(world, openai, emitter) {
     cachedSigs   = await signals.computeSignals(prices, world.getPriceHistory(), { interval: CANDLE_INTERVAL_LABEL })
     lastCandleAt = now
     emitter.emit('candle', { interval: CANDLE_INTERVAL_LABEL, signals: cachedSigs })
+    // Refresh macro trend once per day
+    if (now - _lastDailyFetch > 86400000) _refreshMacroTrend().catch(() => {})
   } else {
     // Mid-candle: update live prices for P&L/stop-loss tracking only
     world.setLivePrices(prices)
   }
 
   const sigs = cachedSigs
+
+  // Sync MEGA's capital/holdings from real Binance account before building contexts
+  if (executor.REAL_TRADING) {
+    log('MEGA real trading active — syncing Binance state...')
+    await executor.syncMegaState(world, prices)
+  }
 
   const alive   = Object.values(world.getSnapshot().agents).filter(a => a.alive)
   const ctxs    = alive.map(a => world.getPromptContext(a.name, sigs, prices))
@@ -76,10 +87,37 @@ async function tick(world, openai, emitter) {
     }))
   }
 
-  decisions.forEach((d, i) => {
-    const result = world.applyDecision(alive[i].name, d, prices)
-    emitter.emit('trade', { ...result, agent: alive[i].name })
-  })
+  // After-trade synthesis for MEGA: refresh personality immediately on BUY/SELL
+  const megaIdx = alive.findIndex(a => a.name === 'MEGA')
+  if (megaIdx !== -1 && decisions[megaIdx].action !== 'HOLD') {
+    decisions[megaIdx].personality = await synthesize(ctxs[megaIdx], openai)
+  }
+
+  for (let i = 0; i < decisions.length; i++) {
+    const d      = decisions[i]
+    const name   = alive[i].name
+    const result = world.applyDecision(name, d, prices)
+    emitter.emit('trade', { ...result, agent: name })
+    if (name === 'MEGA' && executor.REAL_TRADING) {
+      log(`MEGA decision → ${d.action}${d.pair ? ' ' + d.pair : ''}${d.amount_usd ? ' $' + Math.round(d.amount_usd) : ''}`)
+      const fill = await executor.execute(d, prices)
+
+      // Patch entry price with real Binance fill price (replaces sim ask-price estimate)
+      if (fill && d.action === 'BUY' && d.pair && fill.fillPrice) {
+        world._snapshot.agents['MEGA'].entryPrices[d.pair] = fill.fillPrice
+        log(`MEGA entry price: ${d.pair} sim=$${prices[d.pair]?.toFixed(4)} real=$${fill.fillPrice.toFixed(4)}`)
+      }
+
+      // Use live snapshot for daily loss check (syncMegaState already patched it)
+      const megaLive = world._snapshot.agents['MEGA']
+      if (megaLive) {
+        const total = megaLive.capital + Object.entries(megaLive.holdings || {})
+          .reduce((s, [p, q]) => s + (prices[p] ? q * prices[p] : 0), 0)
+        log(`MEGA post-tick: capital=$${Math.round(megaLive.capital)}  total=$${Math.round(total)}`)
+        executor.checkDailyLoss(total)
+      }
+    }
+  }
 
   world.endTick(sigs)
 
@@ -90,6 +128,23 @@ async function tick(world, openai, emitter) {
   if (stillAlive.length === 1) {
     emitter.emit('winner', stillAlive[0].name)
     stop()
+  }
+}
+
+// ── Macro trend (BTC daily SMA200) ────────────────────────────────────────────
+let _macroTrend     = 'neutral'
+let _lastDailyFetch = 0
+
+async function _refreshMacroTrend() {
+  try {
+    const url  = 'https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=200'
+    const bars = await fetch(url, { signal: AbortSignal.timeout(6000) }).then(r => r.json())
+    const closes = bars.map(b => parseFloat(b[4]))
+    _macroTrend     = signals.computeMacroTrend(closes)
+    _lastDailyFetch = Date.now()
+    log(`Macro trend: ${_macroTrend.toUpperCase()} (BTC vs ${closes.length >= 200 ? 'SMA200' : 'SMA50'})`)
+  } catch (err) {
+    log(`Macro trend fetch failed: ${err.message}`)
   }
 }
 
@@ -126,9 +181,11 @@ const world   = new World('./data/sim.db')
 const openai  = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 const emitter = new EventEmitter()
 
-// Warm up price history — awaited before the first tick fires so signals are
-// never computed against empty/flat history.
-const _warmupReady = _warmHistory(world).catch(() => {})
+// Warm up price history + macro trend — awaited before the first tick fires.
+const _warmupReady = Promise.all([
+  _warmHistory(world).catch(() => {}),
+  _refreshMacroTrend().catch(() => {})
+])
 
 let timer      = null
 let busy       = false
@@ -165,4 +222,4 @@ async function runTick() {
   busy = false
 }
 
-module.exports = { world, emitter, start, stop, setInterval_, runTick, getIntervalMs: () => interval, getLastTickAt: () => lastTickAt, VERSION }
+module.exports = { world, emitter, start, stop, setInterval_, runTick, getIntervalMs: () => interval, getLastTickAt: () => lastTickAt, getMacroTrend: () => _macroTrend, VERSION }

@@ -18,14 +18,15 @@ if [ "$CONFIRM" != "RESET" ]; then
 fi
 echo ""
 
-# 1. DB — clear ticks and reset round counter
+# 1. DB — clear ticks and reset round counter + MEGA persistent state
 if [ -f "$DB" ]; then
   node -e "
     const db = require('better-sqlite3')('$DB')
     db.exec('DELETE FROM ticks')
     db.prepare(\"UPDATE config SET value='0' WHERE key='current_round'\").run()
+    db.prepare(\"DELETE FROM config WHERE key='mega_state'\").run()
     db.close()
-    console.log('✓ DB cleared (ticks + current_round)')
+    console.log('✓ DB cleared (ticks + current_round + mega_state)')
   "
 else
   echo "  (no sim.db — will be created fresh on next start)"

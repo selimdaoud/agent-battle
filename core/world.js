@@ -1,11 +1,14 @@
 'use strict'
 
-const VERSION = '1.0.1'
+const VERSION = '1.0.3'
 
 require('dotenv').config()
 const fs       = require('fs')
 const path     = require('path')
 const Database = require('better-sqlite3')
+
+const REAL_TRADING      = process.env.REAL_TRADING === '1'
+const MEGA_SIM_CAPITAL  = parseInt(process.env.MEGA_INITIAL_CAPITAL) || 500
 
 const _MEGA_CONFIG_PATH = path.join(__dirname, '../agents/mega-config.json')
 let _megaCfg = JSON.parse(fs.readFileSync(_MEGA_CONFIG_PATH, 'utf8'))
@@ -198,10 +201,11 @@ function _totalValue(agent, prices) {
 }
 
 function _defaultAgent(name) {
+  const startCapital = (name === 'MEGA' && !REAL_TRADING) ? MEGA_SIM_CAPITAL : C.INITIAL_CAPITAL
   return {
     name,
     alive:                true,
-    capital:              C.INITIAL_CAPITAL,
+    capital:              startCapital,
     holdings:             {},
     entryPrices:          {},
     entryRounds:          {},
@@ -211,7 +215,7 @@ function _defaultAgent(name) {
     consecutiveLastPlace: 0,
     threatened:           false,
     survivalScore:        0,
-    portfolioHistory:     [C.INITIAL_CAPITAL],
+    portfolioHistory:     [startCapital],
     totalFees:            0
   }
 }
@@ -276,7 +280,7 @@ class World {
         priceHistory:   Object.fromEntries(C.PAIRS.map(p => [p, []])),
         lastSignals:    [],
         lastEventId:    0,
-        totalInjected:  C.INITIAL_CAPITAL * 4,
+        totalInjected:  C.INITIAL_CAPITAL * 3,
         totalRecovered: 0
       }
       return
@@ -366,6 +370,20 @@ class World {
         agent.portfolioHistory = [C.INITIAL_CAPITAL, ...Object.keys(roundValues).sort((a,b)=>a-b).map(r => roundValues[r])]
       }
 
+      // Restore MEGA state from config if no trade ticks found (survives DB reset)
+      if (name === 'MEGA' && tradeTicks.length === 0) {
+        const savedRow = this._db.prepare("SELECT value FROM config WHERE key='mega_state'").get()
+        if (savedRow) {
+          const s = JSON.parse(savedRow.value)
+          agent.capital     = s.capital
+          agent.holdings    = s.holdings    || {}
+          agent.entryPrices = s.entryPrices || {}
+          agent.entryRounds = s.entryRounds || {}
+          agent.totalFees   = s.totalFees   || 0
+          agent.respawnCount = s.respawnCount || 0
+        }
+      }
+
       agents[name] = agent
     }
 
@@ -414,7 +432,7 @@ class World {
       priceHistory,
       lastSignals:   [],
       lastEventId:   lastEvent ? lastEvent.id : 0,
-      totalInjected:  C.INITIAL_CAPITAL * 4 + totalRespawnInjected,
+      totalInjected:  C.INITIAL_CAPITAL * 3 + totalRespawnInjected,
       totalRecovered
     }
   }
@@ -719,6 +737,22 @@ class World {
     this._snapshot.round++
     this._db.prepare("INSERT OR REPLACE INTO config(key,value) VALUES('current_round',?)")
       .run(String(this._snapshot.round))
+
+    // Persist MEGA state so it survives DB resets between sessions
+    const mega = this._snapshot.agents.MEGA
+    if (mega) {
+      const megaState = {
+        capital:      mega.capital,
+        holdings:     mega.holdings,
+        entryPrices:  mega.entryPrices,
+        entryRounds:  mega.entryRounds,
+        totalFees:    mega.totalFees,
+        respawnCount: mega.respawnCount,
+        savedAt:      this._snapshot.round
+      }
+      this._db.prepare("INSERT OR REPLACE INTO config(key,value) VALUES('mega_state',?)")
+        .run(JSON.stringify(megaState))
+    }
   }
 
   applyCommand(command) {
@@ -968,7 +1002,7 @@ class World {
     const totalPortfolio = Object.values(this._snapshot.agents)
       .reduce((s, a) => s + _totalValue(a, this._lastPrices), 0)
     const respawnCapital = Math.max(totalPortfolio * 0.3, C.BANKRUPTCY_FLOOR * 2)
-    this._snapshot.totalInjected = (this._snapshot.totalInjected || C.INITIAL_CAPITAL * 4) + respawnCapital
+    this._snapshot.totalInjected = (this._snapshot.totalInjected || C.INITIAL_CAPITAL * 3) + respawnCapital
     agent.alive              = true
     agent.threatened         = false
     agent.capital            = respawnCapital

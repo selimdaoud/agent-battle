@@ -72,12 +72,18 @@ function agentMetrics(agentName) {
     byRegime[r].trades.push(t)
     if (t.realizedPnlPct > 0) byRegime[r].wins++
   }
-  const regimeStats = Object.entries(byRegime).map(([regime, d]) => ({
-    regime,
-    count:   d.trades.length,
-    winRate: parseFloat(((d.wins / d.trades.length) * 100).toFixed(1)),
-    avgPnl:  parseFloat((d.trades.reduce((s, t) => s + t.realizedPnlPct, 0) / d.trades.length).toFixed(3))
-  }))
+  const regimeStats = Object.entries(byRegime).map(([regime, d]) => {
+    const n            = d.trades.length
+    const stopLossCount = d.trades.filter(t => t.exitReason === 'stop_loss').length
+    return {
+      regime,
+      count:          n,
+      winRate:        parseFloat(((d.wins / n) * 100).toFixed(1)),
+      avgPnl:         parseFloat((d.trades.reduce((s, t) => s + t.realizedPnlPct, 0) / n).toFixed(3)),
+      stopLossRate:   parseFloat(((stopLossCount / n) * 100).toFixed(1)),
+      avgHoldRounds:  parseFloat((d.trades.reduce((s, t) => s + t.roundsHeld, 0) / n).toFixed(1))
+    }
+  })
 
   // Exit reason breakdown
   const byExit = {}
@@ -235,11 +241,12 @@ for (const m of metrics) {
   if (!m.regimeStats.length) continue
   lines.push(`### ${m.agent}`)
   lines.push(``)
-  lines.push(`| Regime | Trades | Win Rate | Avg PnL |`)
-  lines.push(`|--------|--------|----------|---------|`)
+  lines.push(`| Regime | Trades | Win Rate | Avg PnL | Stop Loss% | Avg Hold |`)
+  lines.push(`|--------|--------|----------|---------|------------|----------|`)
   for (const r of m.regimeStats.sort((a, b) => b.count - a.count)) {
-    const flag = r.winRate < 40 ? ' ⚠' : r.winRate > 60 ? ' ✓' : ''
-    lines.push(`| ${r.regime.padEnd(13)} | ${String(r.count).padStart(6)} | ${r.winRate.toFixed(1)}%${flag} | ${pct(r.avgPnl)} |`)
+    const flag   = r.winRate < 40 ? ' ⚠' : r.winRate > 60 ? ' ✓' : ''
+    const slFlag = r.stopLossRate > 50 ? ' ⚠' : ''
+    lines.push(`| ${r.regime.padEnd(13)} | ${String(r.count).padStart(6)} | ${r.winRate.toFixed(1)}%${flag} | ${pct(r.avgPnl)} | ${r.stopLossRate != null ? r.stopLossRate.toFixed(0) + '%' + slFlag : 'n/a'} | ${r.avgHoldRounds != null ? r.avgHoldRounds.toFixed(1) + 'r' : 'n/a'} |`)
   }
   lines.push(``)
 }

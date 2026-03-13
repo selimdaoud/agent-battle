@@ -40,11 +40,15 @@ const sessions = analysisFiles.map(({ full }) => JSON.parse(fs.readFileSync(full
 
 // ── Build trends ──────────────────────────────────────────────────────────────
 
-// agentRegimeWinRates[agent][regime] = [winRate_s1, winRate_s2, ...]
-const agentRegimeWinRates = {}
-// agentRegimeAvgPnl[agent][regime]   = [avgPnl_s1, ...]
-const agentRegimeAvgPnl   = {}
-// signalAccuracy[signal]             = [accuracy_s1, ...]
+// agentRegimeWinRates[agent][regime]     = [winRate_s1, winRate_s2, ...]
+const agentRegimeWinRates    = {}
+// agentRegimeAvgPnl[agent][regime]       = [avgPnl_s1, ...]
+const agentRegimeAvgPnl      = {}
+// agentRegimeStopLossRate[agent][regime] = [stopLossRate_s1, ...]  (% of exits that were stop_loss)
+const agentRegimeStopLossRate = {}
+// agentRegimeAvgHoldRounds[agent][regime]= [avgHoldRounds_s1, ...]
+const agentRegimeAvgHoldRounds = {}
+// signalAccuracy[signal]                 = [accuracy_s1, ...]
 const signalAccuracy      = {}
 // sessionIds for reference
 const sessionIds          = sessions.map(s => s.sessionId)
@@ -60,11 +64,18 @@ for (const session of sessions) {
     if (!agentRegimeWinRates[name]) agentRegimeWinRates[name] = {}
     if (!agentRegimeAvgPnl[name])   agentRegimeAvgPnl[name]   = {}
 
+    if (!agentRegimeStopLossRate[name])  agentRegimeStopLossRate[name]  = {}
+    if (!agentRegimeAvgHoldRounds[name]) agentRegimeAvgHoldRounds[name] = {}
+
     for (const r of (agentMetrics.regimeStats || [])) {
-      if (!agentRegimeWinRates[name][r.regime]) agentRegimeWinRates[name][r.regime] = []
-      if (!agentRegimeAvgPnl[name][r.regime])   agentRegimeAvgPnl[name][r.regime]   = []
+      if (!agentRegimeWinRates[name][r.regime])     agentRegimeWinRates[name][r.regime]     = []
+      if (!agentRegimeAvgPnl[name][r.regime])       agentRegimeAvgPnl[name][r.regime]       = []
+      if (!agentRegimeStopLossRate[name][r.regime]) agentRegimeStopLossRate[name][r.regime] = []
+      if (!agentRegimeAvgHoldRounds[name][r.regime]) agentRegimeAvgHoldRounds[name][r.regime] = []
       agentRegimeWinRates[name][r.regime].push(r.winRate)
       agentRegimeAvgPnl[name][r.regime].push(r.avgPnl)
+      if (r.stopLossRate   != null) agentRegimeStopLossRate[name][r.regime].push(r.stopLossRate)
+      if (r.avgHoldRounds  != null) agentRegimeAvgHoldRounds[name][r.regime].push(r.avgHoldRounds)
     }
   }
 
@@ -77,11 +88,13 @@ for (const session of sessions) {
 }
 
 const trends = {
-  lastUpdated:          new Date().toISOString(),
-  sessionCount:         sessions.length,
+  lastUpdated:               new Date().toISOString(),
+  sessionCount:              sessions.length,
   sessionIds,
   agentRegimeWinRates,
   agentRegimeAvgPnl,
+  agentRegimeStopLossRate,
+  agentRegimeAvgHoldRounds,
   signalAccuracy
 }
 
@@ -141,14 +154,15 @@ for (const name of agents) {
   if (!ca?.regimeStats?.length) continue
 
   lines.push(`### ${name}`)
-  lines.push(`| Regime | Prev | Curr | Trend (all sessions) |`)
-  lines.push(`|--------|------|------|----------------------|`)
+  lines.push(`| Regime | Win% Prev | Win% Curr | SL% Curr | Avg Hold | Trend (win%) |`)
+  lines.push(`|--------|-----------|-----------|----------|----------|--------------|`)
 
   for (const r of ca.regimeStats) {
     const prevStat = pa?.regimeStats?.find(x => x.regime === r.regime)
     const trend    = agentRegimeWinRates[name]?.[r.regime] || []
     const trendStr = trend.map(v => `${v.toFixed(0)}%`).join(' → ')
-    lines.push(`| ${r.regime.padEnd(13)} | ${fmt(prevStat?.winRate)} | ${fmt(r.winRate)} | ${trendStr} |`)
+    const slFlag   = r.stopLossRate > 50 ? ' ⚠' : ''
+    lines.push(`| ${r.regime.padEnd(13)} | ${fmt(prevStat?.winRate)} | ${fmt(r.winRate)} | ${r.stopLossRate != null ? r.stopLossRate.toFixed(0) + '%' + slFlag : 'n/a'} | ${r.avgHoldRounds != null ? r.avgHoldRounds.toFixed(1) + 'r' : 'n/a'} | ${trendStr} |`)
   }
   lines.push(``)
 }

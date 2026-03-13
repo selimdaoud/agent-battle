@@ -1,6 +1,6 @@
 'use strict'
 
-const VERSION = '1.0.0'
+const VERSION = '1.0.3'
 
 const blessed = require('blessed')
 
@@ -38,6 +38,9 @@ function create(parent, clientRef, logPane, screen) {
   let pendingCmd    = null
   let sellCounts    = { ALPHA: 0, BETA: 0, GAMMA: 0 }
   let sessionTrades = 0
+  let megaOnline    = false
+  let macroTrend    = 'neutral'
+  let proposalReady = false
 
   const helpText = [
     '{bold}[P]{/bold}         Play / Pause',
@@ -49,7 +52,8 @@ function create(parent, clientRef, logPane, screen) {
     '{bold}[X][A/B/G/M]{/bold}  Terminate agent',
     '  then {bold}[E]{/bold}liminate / {bold}[R]{/bold}espawn',
     '',
-    '{bold}[M]{/bold}         Force session export now',
+    '{bold}[O]{/bold}         Toggle MEGA online/offline',
+    '{bold}[N]{/bold}         Force session export now',
     '{bold}[S]{/bold}         Toggle signal detail',
     '{bold}[L]{/bold}         Cycle log filter',
     '{bold}[TAB]{/bold}       Cycle agent filter A/B/G/M/All',
@@ -74,6 +78,12 @@ function create(parent, clientRef, logPane, screen) {
       ? `{green-fg}▶ RUNNING{/green-fg}  Next: ${nextTickSecs}s`
       : '{yellow-fg}⏸ PAUSED  [P] to start{/yellow-fg}'
 
+    const macroStr = macroTrend === 'bull'
+      ? '{green-fg}↑ BULL{/green-fg}'
+      : macroTrend === 'bear'
+        ? '{red-fg}↓ BEAR{/red-fg}'
+        : '{grey-fg}~ NEUTRAL{/grey-fg}'
+
     let tradesStr = ''
     if (sessionTrades > 0) {
       const a     = sellCounts.ALPHA || 0
@@ -84,8 +94,11 @@ function create(parent, clientRef, logPane, screen) {
       const totStr = done ? `{green-fg}${total}/${sessionTrades}{/green-fg}` : `${total}/${sessionTrades}`
       tradesStr = `   Sells: A:${a} B:${b} G:${g}  total:${totStr}`
     }
+
+    const proposalStr = proposalReady ? '  {yellow-fg}★ Proposal ready — press [P]{/yellow-fg}' : ''
+
     statusBar.setContent(
-      `  ${connStr}   ${runStr}   Round: ${round}   Interval: ${INTERVAL_LABELS[intervalIdx]}${tradesStr}`
+      `  ${connStr}   ${runStr}   Round: ${round}   Interval: ${INTERVAL_LABELS[intervalIdx]}   BTC: ${macroStr}${tradesStr}${proposalStr}`
     )
     parent.screen.render()
   }
@@ -117,8 +130,11 @@ function create(parent, clientRef, logPane, screen) {
     nextTickSecs = snap.nextTickAt
       ? Math.max(0, Math.round((snap.nextTickAt - Date.now()) / 1000))
       : INTERVALS[intervalIdx] / 1000
-    if (snap.sellCounts)    sellCounts    = snap.sellCounts
-    if (snap.sessionTrades) sessionTrades = snap.sessionTrades
+    if (snap.sellCounts)           sellCounts    = snap.sellCounts
+    if (snap.sessionTrades)        sessionTrades = snap.sessionTrades
+    if (snap.realTrading != null)  megaOnline    = snap.realTrading
+    if (snap.macroTrend)           macroTrend    = snap.macroTrend
+    if (snap.proposalReady != null) proposalReady = snap.proposalReady
     renderStatus()
   }
 
@@ -203,7 +219,20 @@ function create(parent, clientRef, logPane, screen) {
         renderStatus()
         break
 
-      case 'm': case 'M':
+      case 'o': case 'O': {
+        megaOnline = !megaOnline  // flip locally immediately so double-press works
+        sendCommand('set_real_trading', { params: { enabled: megaOnline } })
+        callbacks.onRealTradingToggle && callbacks.onRealTradingToggle(megaOnline)
+        logPane && logPane.append(
+          megaOnline
+            ? '{yellow-fg}CMD: MEGA ONLINE — real trading enabled{/yellow-fg}'
+            : '{grey-fg}CMD: MEGA OFFLINE — real trading disabled{/grey-fg}',
+          'TICK'
+        )
+        break
+      }
+
+      case 'n': case 'N':
         sendCommand('run_pipeline')
         logPane && logPane.append('{cyan-fg}CMD: Force export → running session analysis...{/cyan-fg}', 'TICK')
         break

@@ -1,5 +1,7 @@
 'use strict'
 
+const VERSION = '1.0.0'
+
 const blessed = require('blessed')
 const { C }   = require('../../core/world')
 
@@ -22,18 +24,21 @@ function create(parent) {
     keys:   true
   })
 
-  let compact   = true
-  let lastSigs  = []
+  let compact        = true
+  let lastSigs       = []
+  let lastMacroTrend = null
 
-  function update(signals) {
+  function update(signals, macroTrend) {
     if (!signals || !signals.length) return
     lastSigs = signals
+    if (macroTrend !== undefined) lastMacroTrend = macroTrend
     render()
   }
 
   function render() {
-    const lines = lastSigs.map(s => formatSignal(s, compact))
-    box.setContent(lines.join('\n'))
+    const header = formatMacroTrend(lastMacroTrend)
+    const lines  = lastSigs.map(s => formatSignal(s, compact))
+    box.setContent((header ? header + '\n' : '') + lines.join('\n'))
     parent.screen.render()
   }
 
@@ -43,6 +48,16 @@ function create(parent) {
   }
 
   return { update, toggleCompact }
+}
+
+function formatMacroTrend(trend) {
+  if (!trend) return ''
+  const label = trend === 'bull'
+    ? '{green-fg}↑ BULL{/green-fg}'
+    : trend === 'bear'
+      ? '{red-fg}↓ BEAR{/red-fg}'
+      : '{grey-fg}~ NEUTRAL{/grey-fg}'
+  return `{bold}BTC Macro:{/bold} ${label}  {grey-fg}(SMA200){/grey-fg}\n${'─'.repeat(40)}`
 }
 
 function formatSignal(s, compact) {
@@ -84,4 +99,4 @@ function fmtPrice(p) {
   return '$' + p.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 5 })
 }
 
-module.exports = { create }
+module.exports = { create, VERSION }

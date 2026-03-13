@@ -1,6 +1,6 @@
 'use strict'
 
-const VERSION = '1.0.0'
+const VERSION = '1.0.1'
 
 const ss = require('simple-statistics')
 const { C } = require('./world')
@@ -355,4 +355,23 @@ async function computeSignals(prices, priceHistories, { backtest = false, interv
   return signals
 }
 
-module.exports = { computeSignals, VERSION }
+/**
+ * computeMacroTrend(dailyCloses) → 'bull' | 'bear' | 'neutral'
+ *
+ * Uses BTC daily closing prices to classify the macro market direction.
+ * Primary signal: price vs 200-day SMA.  Falls back to 50-day SMA if < 200 bars available.
+ * A ±2% buffer around the SMA prevents flip-flopping near the line.
+ */
+function computeMacroTrend(dailyCloses) {
+  if (dailyCloses.length < 20) return 'neutral'
+  const price  = dailyCloses[dailyCloses.length - 1]
+  const ref    = dailyCloses.length >= 200
+    ? mean(dailyCloses.slice(-200))
+    : mean(dailyCloses.slice(-50))
+  const pct = (price - ref) / ref
+  if (pct >  0.02) return 'bull'
+  if (pct < -0.02) return 'bear'
+  return 'neutral'
+}
+
+module.exports = { computeSignals, computeMacroTrend, VERSION }

@@ -165,7 +165,10 @@ SURVIVAL RULES (automatic, no human input):
   - ADAPTATION BONUS (+0.15): change your dominant strategy after losses
 ${ctx.threatened ? buildThreatDirective(ctx) : '🟢 THREAT STATUS: Safe.'}
 
-Respond in plain text only — one vivid sentence describing your current psychological state and market view as ${ctx.agentName}.`
+Respond in plain text only — ${ctx.agentName === 'MEGA'
+  ? 'one factual sentence about your current position, cash level, and reasoning.'
+  : `one vivid sentence describing your current psychological state and market view as ${ctx.agentName}.`
+}`
 }
 
 /**
@@ -179,12 +182,15 @@ async function synthesize(ctx, openai) {
   if (!openai) return ''
   const prompt = buildPrompt(ctx)
   try {
+    const userMsg = ctx.agentName === 'MEGA'
+      ? 'In one sentence: what positions do you currently hold (or that you hold no positions), how much cash do you have, and why are you positioned this way given current signals and regime?'
+      : 'Describe your current state in one sentence.'
     const res = await openai.chat.completions.create({
       model:      'gpt-4o',
       max_tokens: 80,
       messages: [
         { role: 'system', content: prompt },
-        { role: 'user',   content: 'Describe your current state in one sentence.' }
+        { role: 'user',   content: userMsg }
       ]
     })
     return res.choices[0].message.content.trim()

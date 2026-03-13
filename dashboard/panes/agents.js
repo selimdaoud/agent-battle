@@ -1,10 +1,12 @@
 'use strict'
 
+const VERSION = '1.0.2'
+
 const blessed = require('blessed')
 const { C }   = require('../../core/world')
 
 const INITIAL_CAPITAL = C.INITIAL_CAPITAL
-const TOTAL_START     = INITIAL_CAPITAL * 4  // $40,000 combined (4 agents)
+const SIM_START       = INITIAL_CAPITAL * 3  // $30,000 — A/B/G only (MEGA is always excluded)
 
 function create(parent) {
   const boxes = {}
@@ -59,14 +61,20 @@ function create(parent) {
     )
 
     // ── Aggregate calculations ────────────────────────────────────────────────
+    const realTrading   = snap.realTrading || false
+    // MEGA is always excluded from sim P&L — its capital is never mixed with A/B/G
+    const simAgents     = alive.filter(a => a.name !== 'MEGA')
+    const megaLiveAgent = realTrading ? alive.find(a => a.name === 'MEGA') : null
+    const simStart      = SIM_START
+
     const combinedFees     = allAgents.reduce((s, a) => s + (a.totalFees || 0), 0)
-    const aliveTotal       = alive.reduce((s, a) => s + totalValue(a, prices), 0)
-    const combinedCash     = alive.reduce((s, a) => s + a.capital, 0)
+    const aliveTotal       = simAgents.reduce((s, a) => s + totalValue(a, prices), 0)
+    const combinedCash     = simAgents.reduce((s, a) => s + a.capital, 0)
     const combinedCrypto   = aliveTotal - combinedCash
     const totalRecovered   = snap.totalRecovered || 0
-    const atRisk           = snap.totalInjected || TOTAL_START          // currently deployed (shrinks on elimination)
-    const totalCommitted   = atRisk + totalRecovered                    // ever committed — never decreases, P&L base
-    const totalAssets      = aliveTotal + totalRecovered                // alive market value + returned principal
+    const atRisk           = snap.totalInjected ? snap.totalInjected - (realTrading ? INITIAL_CAPITAL : 0) : simStart
+    const totalCommitted   = atRisk + totalRecovered
+    const totalAssets      = aliveTotal + totalRecovered
     const pnlAmt           = totalAssets - totalCommitted
     const pnlPct           = (pnlAmt / totalCommitted * 100).toFixed(1)
     const pnlSign          = pnlAmt >= 0 ? '+' : ''
@@ -118,13 +126,26 @@ function create(parent) {
       return `{${col}-fg}{bold}${n}{/bold} ${bar} ${pct}%{/${col}-fg}`
     }).join('   ')
 
-    const respawnExtra = totalCommitted > TOTAL_START
-      ? ` {magenta-fg}(+$${fmt(totalCommitted - TOTAL_START)} respawns){/magenta-fg}` : ''
+    const respawnExtra = totalCommitted > simStart
+      ? ` {magenta-fg}(+$${fmt(totalCommitted - simStart)} respawns){/magenta-fg}` : ''
     const recoveredExtra = totalRecovered > 0
       ? `   At Risk: {bold}$${fmt(atRisk)}{/bold}  {grey-fg}$${fmt(totalRecovered)} returned{/grey-fg}` : ''
 
+    // MEGA LIVE line — real account stats shown separately
+    const megaLiveLine = megaLiveAgent
+      ? (() => {
+          const mv    = totalValue(megaLiveAgent, prices)
+          const mc    = megaLiveAgent.capital
+          const mcr   = mv - mc
+          const mpnl  = ((mv - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100).toFixed(1)
+          const mpCol = mpnl >= 0 ? 'green' : 'red'
+          const mpSign = mpnl >= 0 ? '+' : ''
+          return `   {yellow-fg}{bold}MEGA LIVE{/bold}: $${fmt(mv)}  P&L:{/yellow-fg}{${mpCol}-fg}{bold}${mpSign}${mpnl}%{/bold}{/${mpCol}-fg}  USDT:$${fmt(mc)}  Crypto:$${fmt(mcr)}{/yellow-fg}`
+        })()
+      : ''
+
     summary.setContent(
-      ` {bold}PORTFOLIO OVERVIEW{/bold}` +
+      ` {bold}PORTFOLIO OVERVIEW {grey-fg}(A/B/G sim){/grey-fg}{/bold}` +
       `   Committed: {bold}$${fmt(totalCommitted)}{/bold}${respawnExtra}${recoveredExtra}` +
       `   Total Assets: {bold}$${fmt(totalAssets)}{/bold}` +
       `   P&L: {${pnlColor}-fg}{bold}${pnlSign}$${fmt(pnlAmt)} (${pnlSign}${pnlPct}%){/bold}{/${pnlColor}-fg}` +
@@ -132,7 +153,7 @@ function create(parent) {
       `   Cash: {bold}$${fmt(combinedCash)}{/bold}` +
       `   Crypto: {bold}$${fmt(combinedCrypto)}{/bold}` +
       `   Exposure: {bold}${exposurePct}%{/bold}` +
-      `   ${leaderStr}\n` +
+      `   ${leaderStr}${megaLiveLine}\n` +
       ` ${bar(combinedCash, combinedCrypto, aliveTotal)}\n` +
       `${consensusLine}\n` +
       `${winLine}`
@@ -156,14 +177,18 @@ function create(parent) {
         continue
       }
 
-      const defaultColor  = name === 'MEGA' ? 'yellow' : 'cyan'
+      const defaultColor  = name === 'MEGA' ? (realTrading ? 'yellow' : 'grey') : 'cyan'
       const borderColor   = agent.threatened ? 'red' : defaultColor
       box.style.border.fg = borderColor
       box.style.label.fg  = borderColor
 
       const statusIcon = agent.threatened
         ? '{red-fg}⚠ THREATENED{/red-fg}'
-        : '{green-fg}●{/green-fg}'
+        : (name === 'MEGA' && realTrading)
+          ? '{yellow-fg}⚡ LIVE{/yellow-fg}'
+          : name === 'MEGA'
+            ? '{grey-fg}○ SIM{/grey-fg}'
+            : '{green-fg}●{/green-fg}'
       const rankStr   = rank ? `#${rank}` : ''
       const holdLines = holdingLines(agent, prices, total, snap.round)
 
@@ -256,4 +281,4 @@ function fmt(n) {
   return Number(n).toLocaleString('en-US', { maximumFractionDigits: 0 })
 }
 
-module.exports = { create }
+module.exports = { create, VERSION }
