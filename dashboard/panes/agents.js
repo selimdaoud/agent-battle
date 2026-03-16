@@ -1,6 +1,6 @@
 'use strict'
 
-const VERSION = '1.0.2'
+const VERSION = '1.0.3'
 
 const blessed = require('blessed')
 const { C }   = require('../../core/world')
@@ -210,6 +210,8 @@ function create(parent) {
         `─────────────────────\n` +
         `Holdings:\n${holdLines || '  (none)'}\n` +
         `─────────────────────\n` +
+        `${metricsLines(agent)}\n` +
+        `─────────────────────\n` +
         `{cyan-fg}"${agent.personality || '…'}"{/cyan-fg}`
       )
 
@@ -277,6 +279,102 @@ function holdingLines(agent, prices, agentTotal, round) {
 
       return `  ${(C.LABELS[p] || p).padEnd(10)} ${valStr}${pnlStr}${allocStr}${heldStr}`
     }).join('\n')
+}
+
+// ── Trading quality metrics ───────────────────────────────────────────────────
+function computeMetrics(agent) {
+  const closed = agent.closedTrades || []
+  const hist   = agent.portfolioHistory || []
+
+  // 1. Expectancy per trade
+  let expectancy = null, winRate = null, avgWin = null, avgLoss = null, expWarn = null
+  if (closed.length < 6) {
+    expWarn = `${6 - closed.length} more trades needed`
+  } else {
+    const wins   = closed.filter(t => t.return_pct > 0)
+    const losses = closed.filter(t => t.return_pct <= 0)
+    winRate  = wins.length / closed.length
+    const lossRate = losses.length / closed.length
+    avgWin   = wins.length   ? wins.reduce((s, t)   => s + t.return_pct, 0) / wins.length   : 0
+    avgLoss  = losses.length ? Math.abs(losses.reduce((s, t) => s + t.return_pct, 0) / losses.length) : 0
+    expectancy = (winRate * avgWin) - (lossRate * avgLoss)
+  }
+
+  // 2. Maximum drawdown from equity curve
+  let maxDD = null, ddWarn = null
+  if (hist.length < 2) {
+    ddWarn = 'insufficient history'
+  } else {
+    let peak = hist[0], dd = 0
+    for (let i = 1; i < hist.length; i++) {
+      if (hist[i] > peak) peak = hist[i]
+      const d = peak > 0 ? (hist[i] - peak) / peak : 0
+      if (d < dd) dd = d
+    }
+    maxDD = dd * 100  // percentage, <= 0
+  }
+
+  // 3. Sharpe ratio (per-period, not annualised — simulation horizon too short)
+  let sharpe = null, sharpeWarn = null
+  if (hist.length < 3) {
+    sharpeWarn = 'insufficient history'
+  } else {
+    const returns = []
+    for (let i = 1; i < hist.length; i++) {
+      if (hist[i - 1] > 0) returns.push(hist[i] / hist[i - 1] - 1)
+    }
+    if (returns.length < 2) {
+      sharpeWarn = 'insufficient returns'
+    } else {
+      const mean  = returns.reduce((s, v) => s + v, 0) / returns.length
+      const vari  = returns.reduce((s, v) => s + (v - mean) ** 2, 0) / (returns.length - 1)
+      const std   = Math.sqrt(vari)
+      sharpe      = std === 0 ? null : mean / std
+      if (sharpe === null) sharpeWarn = 'zero variance'
+    }
+  }
+
+  return { expectancy, winRate, avgWin, avgLoss, expWarn,
+           maxDD, ddWarn,
+           sharpe, sharpeWarn,
+           n: closed.length }
+}
+
+function metricsLines(agent) {
+  const m = computeMetrics(agent)
+  const lines = []
+
+  // Expectancy
+  if (m.expWarn) {
+    lines.push(` {grey-fg}Exp: — (${m.expWarn}){/grey-fg}`)
+  } else {
+    const sign  = m.expectancy >= 0 ? '+' : ''
+    const col   = m.expectancy >= 0 ? 'green' : 'red'
+    const wr    = Math.round(m.winRate * 100)
+    const aw    = m.avgWin.toFixed(2)
+    const al    = m.avgLoss.toFixed(2)
+    lines.push(` Exp: {${col}-fg}{bold}${sign}${m.expectancy.toFixed(3)}%{/bold}{/${col}-fg}` +
+               `  {grey-fg}wr:${wr}% aw:${aw}% al:${al}% n:${m.n}{/grey-fg}`)
+  }
+
+  // Max drawdown
+  if (m.ddWarn) {
+    lines.push(` {grey-fg}MaxDD: — (${m.ddWarn}){/grey-fg}`)
+  } else {
+    const col = m.maxDD < -10 ? 'red' : m.maxDD < -5 ? 'yellow' : 'green'
+    lines.push(` MaxDD: {${col}-fg}{bold}${m.maxDD.toFixed(2)}%{/bold}{/${col}-fg}`)
+  }
+
+  // Sharpe
+  if (m.sharpeWarn) {
+    lines.push(` {grey-fg}Sharpe: — (${m.sharpeWarn}){/grey-fg}`)
+  } else {
+    const col  = m.sharpe >= 1 ? 'green' : m.sharpe >= 0 ? 'yellow' : 'red'
+    lines.push(` Sharpe: {${col}-fg}{bold}${m.sharpe.toFixed(3)}{/bold}{/${col}-fg}` +
+               `  {grey-fg}(${agent.portfolioHistory?.length ?? 0} periods){/grey-fg}`)
+  }
+
+  return lines.join('\n')
 }
 
 function fmt(n) {

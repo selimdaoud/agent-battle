@@ -1,6 +1,6 @@
 'use strict'
 
-const VERSION = '1.0.8'
+const VERSION = '1.0.9'
 
 require('dotenv').config()
 const express             = require('express')
@@ -182,7 +182,7 @@ wss.on('connection', (ws, req) => {
 
     if (msg.type === 'COMMAND') handleCommand(msg, ws)
   })
-  ws.send(JSON.stringify({ type: 'STATE', ...engine.world.getSnapshot(), realTrading: executor.REAL_TRADING, sellCounts: { ...sellCounts }, sessionTrades: SESSION_TRADES, macroTrend: engine.getMacroTrend(), proposalReady: fs.existsSync(PROPOSED_FILE) }))
+  ws.send(JSON.stringify({ type: 'STATE', ...engine.world.getSnapshot(), intervalMs: engine.getIntervalMs(), nextTickAt: engine.getLastTickAt() ? engine.getLastTickAt() + engine.getIntervalMs() : null, realTrading: executor.REAL_TRADING, sellCounts: { ...sellCounts }, sessionTrades: SESSION_TRADES, macroTrend: engine.getMacroTrend(), proposalReady: fs.existsSync(PROPOSED_FILE) }))
   if (eventLog.length) ws.send(JSON.stringify({ type: 'LOG_HISTORY', events: eventLog }))
 })
 
@@ -208,14 +208,7 @@ function handleCommand(msg) {
     case 'start':        engine.start();                      return { ok: true }
     case 'stop':
       engine.stop()
-      if (fs.existsSync(PROPOSED_FILE)) {
-        try {
-          const proposed = JSON.parse(fs.readFileSync(PROPOSED_FILE, 'utf8'))
-          if (proposed.proposals?.length) {
-            broadcast({ type: 'PROPOSAL', proposal: proposed.proposals[0], sessionsAnalyzed: proposed.sessionsAnalyzed })
-          }
-        } catch (_) {}
-      }
+      _broadcastProposalIfReady()
       return { ok: true }
     case 'tick':         engine.runTick();                    return { ok: true }
     case 'run_pipeline':
@@ -258,8 +251,10 @@ function _broadcastProposalIfReady() {
   try {
     const proposed = JSON.parse(fs.readFileSync(PROPOSED_FILE, 'utf8'))
     if (proposed.proposals?.length) {
-      broadcast({ type: 'PROPOSAL', proposal: proposed.proposals[0], sessionsAnalyzed: proposed.sessionsAnalyzed })
-      log(`[PROPOSAL] Broadcast: ${proposed.proposals[0].field} ${proposed.proposals[0].current} → ${proposed.proposals[0].proposed}`)
+      const p = proposed.proposals[0]
+      broadcast({ type: 'PROPOSAL', proposal: p, sessionsAnalyzed: proposed.sessionsAnalyzed, autoApplied: true })
+      log(`[PROPOSAL] Auto-applying: ${p.field} ${p.current} → ${p.proposed}`)
+      _applyMegaChange(true)
     }
   } catch (_) {}
 }
@@ -315,6 +310,9 @@ function _applyMegaChange(approved) {
     : { applied: [], rejected: [] }
 
   if (approved) {
+    const backupTs   = new Date().toISOString().replace(/:/g, '-').replace(/\..+/, '')
+    const backupFile = path.join(__dirname, `agents/mega-config.backup.${backupTs}.json`)
+    fs.copyFileSync(CONFIG_FILE, backupFile)
     _setNestedField(megaCfg, p.field, p.proposed)
     if (p.field.startsWith('signal_weights.')) _renormalizeWeights(megaCfg)
     megaCfg.meta.version     = (megaCfg.meta.version || 1) + 1

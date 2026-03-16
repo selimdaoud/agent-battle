@@ -1,6 +1,6 @@
 'use strict'
 
-const VERSION = '1.0.2'
+const VERSION = '1.0.3'
 
 const blessed = require('blessed')
 const { C }   = require('../../core/world')
@@ -36,7 +36,8 @@ function create(parent) {
   }
 
   function render() {
-    const header = formatMacroTrend(lastMacroTrend)
+    const fg     = lastSigs.length ? lastSigs[0].fear_greed : null
+    const header = formatMacroTrend(lastMacroTrend, fg)
     const lines  = lastSigs.map(s => formatSignal(s, compact))
     box.setContent((header ? header + '\n' : '') + lines.join('\n'))
     parent.screen.render()
@@ -50,8 +51,20 @@ function create(parent) {
   return { update, toggleCompact }
 }
 
-function formatMacroTrend(macro) {
-  if (!macro) return ''
+function fmtFearGreed(value) {
+  if (value == null) return ''
+  let label, color
+  if      (value <= 25) { label = 'Extreme Fear'; color = 'red'    }
+  else if (value <= 45) { label = 'Fear';         color = 'yellow' }
+  else if (value <= 55) { label = 'Neutral';      color = 'grey'   }
+  else if (value <= 75) { label = 'Greed';        color = 'green'  }
+  else                  { label = 'Extreme Greed';color = 'green'  }
+  return `  {bold}F&G:{/bold} {${color}-fg}${value} ${label}{/${color}-fg}`
+}
+
+function formatMacroTrend(macro, fearGreed) {
+  const fgStr = fmtFearGreed(fearGreed)
+  if (!macro) return fgStr ? `{bold}Market:{/bold}${fgStr}\n${'─'.repeat(52)}` : ''
 
   const label = macro.trend === 'bull'
     ? '{green-fg}↑ BULL{/green-fg}'
@@ -69,7 +82,7 @@ function formatMacroTrend(macro) {
       const slopeColor = btc.slopeDir === 'rising' ? 'green' : btc.slopeDir === 'falling' ? 'red' : 'grey'
       btcStr = `BTC $${Math.round(btc.price).toLocaleString()}  SMA${btc.period} $${Math.round(btc.sma).toLocaleString()}  {bold}${pctSign}${btc.pct}%{/bold}  slope:{${slopeColor}-fg}${btc.slopeDir}{/${slopeColor}-fg}`
     }
-    return `{bold}Market:{/bold} ${label}${breadthStr}\n${btcStr}\n${'─'.repeat(52)}`
+    return `{bold}Market:{/bold} ${label}${breadthStr}${fgStr}\n${btcStr}\n${'─'.repeat(52)}`
   }
 
   // Legacy BTC-only format (backward compat)
@@ -80,7 +93,7 @@ function formatMacroTrend(macro) {
   const smaStr     = sma    != null ? `  SMA${period} $${Math.round(sma).toLocaleString()}` : ''
   const pctStr     = pct    != null ? `  {bold}${pctSign}${pct}%{/bold}` : ''
   const slopeStr   = slopeDir       ? `  slope: {${slopeColor}-fg}${slopeDir}{/${slopeColor}-fg}` : ''
-  return `{bold}BTC Macro:{/bold} ${label}${priceStr}${smaStr}${pctStr}${slopeStr}\n${'─'.repeat(52)}`
+  return `{bold}BTC Macro:{/bold} ${label}${priceStr}${smaStr}${pctStr}${slopeStr}${fgStr}\n${'─'.repeat(52)}`
 }
 
 function formatSignal(s, compact) {

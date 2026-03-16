@@ -1,0 +1,734 @@
+MEGA STRATEGY — Quantitative Design Review
+Version 13 | Date: 2026-03-14
+Reviewer: Internal
+═══════════════════════════════════════════════════════════════════════════════
+
+
+PURPOSE OF THIS DOCUMENT
+────────────────────────
+This review analyses the MEGA Adaptive Synthesizer strategy as a formal
+quantitative system. It does not describe what the strategy does (see
+STRATEGY.txt for that). It examines whether the design choices are sound,
+what must be true for the strategy to work, where it can break, and how to
+test and improve it. The goal is to surface structural risks before they
+appear in live P&L and to propose experiments that generate evidence rather
+than opinions.
+
+All section references correspond to STRATEGY.txt unless otherwise noted.
+
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 1 — STRUCTURAL ASSUMPTIONS
+═══════════════════════════════════════════════════════════════════════════════
+
+These are the claims the strategy implicitly makes about the market. If any
+of them fail consistently, the strategy's expected value degrades regardless
+of how well it is implemented.
+
+  A1 — SIGNAL STATIONARITY
+  ─────────────────────────
+  Assumption: The seven sub-signals have stable predictive relationships with
+  forward returns. The same cvd_norm > 0.25 that predicted a +1.2% move in
+  Q4 2025 will predict a similar move in Q2 2026.
+
+  Risk: Crypto markets undergo structural regime shifts (e.g. ETF approval,
+  exchange failures, regulatory shocks) that permanently alter signal
+  distributions. A weight set fit on one market structure may be actively
+  misleading in another.
+
+  Current mitigation: None. Weights are fixed manually.
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  A2 — REGIME COVERAGE IS EXHAUSTIVE
+  ────────────────────────────────────
+  Assumption: The four regimes (volatile, trending_up, trending_down,
+  ranging) partition all possible market states and each partition is
+  internally homogeneous enough that a single threshold set applies cleanly
+  within it.
+
+  Risk: In practice, regimes blend and transition. A pair moving from
+  ranging to trending_up creates an intermediate state where the ranging
+  threshold (0.34) is still active but momentum signals are already elevated.
+  The strategy has no transition logic — it snaps between thresholds
+  discretely.
+
+  Additionally, "volatile" is not the same as "directionally volatile." A
+  volatile uptrend and a volatile crash are both classified as volatile, but
+  the appropriate response differs.
+
+  Current mitigation: Intra-candle stop-loss scan provides partial protection
+  during the volatile regime.
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  A3 — CVD IS A RELIABLE PROXY FOR ORDER FLOW INTENT
+  ────────────────────────────────────────────────────
+  Assumption: Net taker buy/sell volume over the last 20 bars reflects real
+  directional intent by informed participants, not noise, wash trading, or
+  automated hedging.
+
+  Risk: CVD at short intervals (15m) on altcoin pairs is heavily influenced
+  by a small number of large fills that may not be directionally informative.
+  A single 500-BTC market buy can dominate 20 bars of CVD for a mid-cap pair
+  while the underlying order book remains flat.
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  A4 — FUNDING RATE IS A CROWDING SIGNAL, NOT A CARRY COST
+  ──────────────────────────────────────────────────────────
+  Assumption: A high positive funding rate (longs paying shorts) predicts
+  mean-reversion or underperformance of long positions, not just elevated
+  carry cost.
+
+  Risk: In sustained trending markets, funding can remain elevated for
+  extended periods while price continues upward. The contrarian interpretation
+  works as a filter on entry timing, but can suppress entries during the
+  highest-momentum phase of a genuine uptrend. The current threshold of 0.55
+  (normalised) was set heuristically. It has not been backtested for optimal
+  cutoff by regime.
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  A5 — HISTORICAL WIN RATE AND PAYOFF RATIO ARE PREDICTIVE
+  ──────────────────────────────────────────────────────────
+  Assumption: The Half-Kelly calculation uses historical p (win rate) and b
+  (avgWin / avgLoss) from prior trades on each pair. This assumes those
+  parameters are stable — that the strategy's next N trades on BTC will
+  resemble the last N.
+
+  Risk: With the 6-trade minimum threshold, Kelly can activate after a run of
+  6 lucky wins on a pair, producing an inflated fraction that will be
+  corrected only after subsequent losses erode the estimate. The 2× cap
+  (40% of capital) is a partial guard but does not address the cold-start
+  estimation problem.
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  A6 — PEER AGENTS (A/B/G) ARE VALID MARKET PROXIES FOR MEGA
+  ─────────────────────────────────────────────────────────────
+  Assumption: A/B/G trade the same 15 pairs, so their per-regime win rates
+  and P&L are representative of what MEGA would achieve in the same regime if
+  it traded at greater frequency.
+
+  Risk: A/B/G operate with $1M capital each. Market impact, fill quality, and
+  position sizing at that scale differ materially from MEGA's $500 base.
+  A ranging win rate of 40% for ALPHA at $1M capital does not guarantee 40%
+  for MEGA at $500, particularly if MEGA is trading less liquid pairs where
+  small sizes are filled at worse prices relative to signal quality. This
+  assumption becomes more fragile if A/B/G ever diverge in archetype or
+  signal set from MEGA.
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  A7 — THREAT MODE IMPROVES EXPECTED OUTCOMES UNDER THREAT
+  ──────────────────────────────────────────────────────────
+  Assumption: When MEGA is threatened, relaxing entry and exit thresholds
+  (−0.08 on buy_signal, CVD gate → > 0) increases the expected number of
+  surviving trades enough to offset the lower quality of those trades.
+
+  Risk: Threat mode is a desperation heuristic, not a derived optimum. Lower
+  thresholds mean more false positives, more stop-losses, and potentially
+  faster capital erosion — the opposite of survival. The assumption that
+  "any action is better than inaction" is a psychological argument, not a
+  quantitative one.
+
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 2 — FAILURE MODES
+═══════════════════════════════════════════════════════════════════════════════
+
+Failure modes are ordered by estimated severity × probability. Each mode
+identifies the mechanism, the observable signature, and what distinguishes it
+from normal underperformance.
+
+  F1 — REGIME MISCLASSIFICATION DURING TRANSITIONS
+  ──────────────────────────────────────────────────
+  Mechanism: The regime classifier uses a 20-bar lookback. At the point of a
+  true trend reversal (e.g. trending_up → trending_down), the classifier will
+  remain in trending_up for several bars while price falls, applying the
+  lower trending_up buy threshold (0.21) instead of the higher ranging (0.34)
+  or trending_down (0.25) thresholds. This inverts the desired behaviour:
+  the most dangerous moment for long entries gets the least restrictive gate.
+
+  Observable signature: Cluster of stop-losses on a specific pair immediately
+  following a local price peak, where regime was classified as trending_up at
+  the time of entry.
+
+  Distinguishing factor: The loss rate per trade during trending_up entries
+  will be higher than the A/B/G proxy data for the same regime, because
+  MEGA's entries were concentrated at trend reversals rather than trend
+  continuations.
+
+  Severity: HIGH. Every regime transition is a misclassification window.
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  F2 — KELLY COLD-START OVERBET
+  ──────────────────────────────
+  Mechanism: Kelly activates at 6 trades per pair. If the first 6 trades on
+  a pair are all winners (possible in a sustained trending period), the
+  estimated win rate p approaches 1.0. Even half-Kelly with b = 1.5 would
+  produce f = 0.5 × ((1.5 × 1.0 − 0.0) / 1.5) = 0.5. Combined with the 2×
+  cap, MEGA could commit 40% of capital to one position immediately after the
+  6-trade threshold is crossed on a pair that is coincidentally in a hot
+  streak. If the streak is regime-driven rather than signal-driven, the
+  first reversion trade will be oversized at the worst moment.
+
+  Observable signature: A large loss on a specific pair within 1–3 trades of
+  the Kelly activation point (trade count crossing 6).
+
+  Severity: MEDIUM–HIGH. Capital is small ($500) so 40% per position is $200.
+  The downside is bounded but material to survival.
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  F3 — DEADWEIGHT EXITS AS SYSTEMATIC ALPHA LEAK
+  ────────────────────────────────────────────────
+  Mechanism: The deadweight exit (held ≥ N rounds, |P&L| < 3%) frees capital
+  from stalled positions. If the underlying alpha is real but slow-developing,
+  the exit removes positions just before they would have triggered the +12%
+  take-profit. The position is then re-entered later (if signal recovers) at
+  a higher cost basis, with fees paid twice.
+
+  The rate of 66.7% deadweight exits over 3 sessions (which triggered v13)
+  is itself ambiguous: it could mean the positions were genuinely worthless
+  OR that the hold time is too short for the underlying signal to express.
+  The fix (raising rounds_min from 5 to 7) increases hold time but does not
+  answer the question of whether the signal has positive forward value at
+  these positions.
+
+  Observable signature: Pairs that are frequently deadweight-exited, then
+  re-entered on the same bar or 1–2 bars later — the signal recovered
+  immediately after exit.
+
+  Severity: MEDIUM. Primarily a fee drag and opportunity cost issue rather
+  than catastrophic loss.
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  F4 — SIGNAL WEIGHT MISCALIBRATION (FUNDING DOMINANCE)
+  ───────────────────────────────────────────────────────
+  Mechanism: funding_signal carries 0.22 weight — the second highest signal
+  weight. It is inverted, meaning high positive funding reduces the composite
+  score. In a market where funding is structurally elevated (e.g. high
+  open interest, many retail longs on leverage), this signal will persistently
+  suppress composite scores across all pairs and all regimes, reducing entry
+  frequency below the level the other six signals would support.
+
+  This is not a signal-specific failure but a weight calibration failure:
+  the 0.22 weight was selected by intuition, not by optimisation against
+  realised returns.
+
+  Observable signature: Long multi-session periods where composite scores
+  consistently sit 0.1–0.2 below entry thresholds despite strong CVD and
+  momentum signals. MEGA sitting in cash while A/B/G continue to trade.
+
+  Severity: MEDIUM. Opportunity cost, not direct loss. Can be catastrophic
+  for survival if MEGA runs out of trades to score.
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  F5 — PROPOSAL PIPELINE LATENCY
+  ────────────────────────────────
+  Mechanism: The self-evolution pipeline requires a pattern to persist for
+  3 consecutive sessions before proposing a change. With 15-minute ticks, a
+  full session is approximately 96 ticks. Three sessions is roughly 8 hours
+  of real trading. In a fast-moving market shift (e.g. sudden shift from
+  trending to volatile across all pairs), the strategy may sustain 3 sessions
+  of losses before any threshold adjustment is proposed — and then a further
+  session before the change is live (because proposals are approved by the
+  operator, not automatically applied).
+
+  Observable signature: A visible degradation in win rate beginning at
+  session N, with the corrective proposal not appearing until session N+3,
+  and the fix not applied until session N+4 or later.
+
+  Severity: LOW–MEDIUM. The 3-session requirement is intentional to prevent
+  overfitting to noise. But it creates an irreducible adaptation lag.
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  F6 — SINGLE-PROPOSAL BOTTLENECK
+  ─────────────────────────────────
+  Mechanism: detect-changes.js generates at most ONE proposal per session.
+  If multiple rules fire simultaneously (e.g. ranging win rate is below
+  threshold AND trending_up stop-loss rate is elevated), only the highest-
+  confidence rule is proposed. The other conditions go unaddressed that
+  session and must compete in the next session. In a genuinely bad market,
+  multiple parameters may need adjustment simultaneously.
+
+  Observable signature: Proposal history showing the same rule repeatedly
+  proposed across sessions while other metrics continue to deteriorate
+  unaddressed.
+
+  Severity: LOW in isolation, but compounds with F5 (latency) when multiple
+  parameters are wrong at the same time.
+
+  Note: Rules 8, 8b, 9, and 9b each target a different parameter or
+  direction — they do not compete with each other for the same field in the
+  same session, which reduces bottleneck pressure for those specific rules.
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  F7 — THREAT MODE ACCELERATED RUIN
+  ───────────────────────────────────
+  Mechanism: When survival pressure activates threat mode, entry thresholds
+  drop by 0.08. This increases trade frequency but at reduced signal quality.
+  If the threat itself was caused by a bad market environment (e.g. all pairs
+  in volatile regime), forcing trades in that environment at lower conviction
+  will produce more stop-losses, depleting capital faster than passive waiting
+  would have. Threat mode can accelerate the outcome it is trying to prevent.
+
+  Observable signature: Threat mode activation followed by a sequence of
+  stop-losses in rapid succession (≤ 3 rounds between stops). Net capital
+  falls faster during threat mode than the preceding period.
+
+  Severity: HIGH. The failure mode is not visible until it is too late to
+  reverse. Capital erosion is irreversible in the current session context.
+
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 3 — PARAMETER SENSITIVITY ANALYSIS
+═══════════════════════════════════════════════════════════════════════════════
+
+The parameters below have the highest estimated impact on outcome. Each is
+assessed for its sensitivity range — the interval over which changes produce
+meaningful shifts in expected P&L.
+
+  buy_signal (base: 0.15)
+  ────────────────────────
+  Lower bound: ~0.10. Below this, almost every pair qualifies almost every
+  tick, turning MEGA into a high-frequency momentum follower that will be
+  stopped out repeatedly in ranging markets.
+
+  Upper bound: ~0.45. Above this, MEGA rarely trades, particularly in ranging
+  and volatile regimes where the override is already 0.30–0.34.
+
+  Sensitivity: HIGH. A change of ±0.05 materially affects trade frequency,
+  which in turn affects Kelly estimation quality and survival trade count.
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  deadweight_rounds_min (current: 7)
+  ────────────────────────────────────
+  Lower bound: 3–4. Below this, nearly every position that doesn't immediately
+  move is exited within one 15m candle interval, generating fees with no alpha.
+
+  Upper bound: 15 (hard cap). At 15 rounds (225 minutes), positions are held
+  for nearly 4 hours minimum. The strategy begins to resemble a swing position
+  holder rather than an intraday system, which changes the expected correlation
+  of its P&L with the signal inputs.
+
+  Sensitivity: MEDIUM. Primarily affects fee drag and capital utilisation
+  rather than per-trade P&L. The current value of 7 was derived from an
+  empirical 66.7% exit rate, not from forward P&L optimisation.
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  sell_loss_pct (base: 6%, trending_down: 4%)
+  ─────────────────────────────────────────────
+  Lower bound: 2–3%. Below this, normal price noise triggers stops on entries
+  with correct directional thesis. The stop is hit before the trade has time
+  to express.
+
+  Upper bound: 10–12%. Beyond this, individual stop-losses begin to represent
+  significant capital erosion (12% loss on a 20% position = 2.4% of capital
+  per trade). With max_positions = 3, simultaneous stops at 12% would reduce
+  capital by ~7.2% in a single round.
+
+  Sensitivity: HIGH. The relationship between stop tightness and stop-loss
+  rate is nonlinear. A stop that is too tight creates high stop-loss rates
+  without reducing per-stop loss (since the trade never had room to develop).
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  funding_signal weight (current: 0.22)
+  ───────────────────────────────────────
+  Impact: Because funding is the second-highest weight and is contrarian
+  (high funding reduces score), it systematically compresses composite scores
+  in high-interest environments. Reducing this weight to 0.10–0.12 would
+  roughly add +0.07–0.10 to average composite scores, shifting borderline
+  entries above threshold.
+
+  Sensitivity: MEDIUM. The impact is directional bias rather than variance.
+  The correct weight depends on whether the funding-as-crowding thesis holds
+  empirically across observed sessions.
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  max_positions (current: 3)
+  ───────────────────────────
+  At 3 positions with 20% base sizing, full deployment is 60% of capital
+  with 40% cash reserve. This is conservative.
+
+  Increasing to 4 or 5 increases capital utilisation but amplifies correlated
+  drawdowns — crypto pairs are highly correlated during market-wide sell-offs,
+  so 5 positions in volatile conditions can stop-loss simultaneously.
+
+  Sensitivity: LOW in normal conditions, HIGH in correlated crash scenarios.
+  The current limit of 3 is appropriate given the absence of cross-pair
+  correlation measurement in the entry logic.
+
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 4 — VALIDATION TESTS
+═══════════════════════════════════════════════════════════════════════════════
+
+These are concrete tests that can be run against existing session data to
+validate or invalidate the key assumptions. Each test has a clear pass/fail
+criterion.
+
+  T1 — SIGNAL PREDICTIVE VALIDITY
+  ─────────────────────────────────
+  Question: Does a higher signal_score at entry actually correlate with better
+  forward returns?
+
+  Method: From session export data, group all closed trades into four bins by
+  signal_score at entry: [threshold, threshold+0.10), [+0.10, +0.20),
+  [+0.20, +0.30), [+0.30, 1.0]. Compute mean realised P&L per bin.
+
+  Pass criterion: Mean P&L should be monotonically increasing across bins.
+  A higher-conviction entry should produce a higher average return.
+
+  Fail indicator: No monotonic relationship, or bins above 0.30 show lower
+  mean P&L than the 0.10–0.20 bin. This would indicate the signal is not
+  calibrated: the high-conviction scores are not corresponding to better
+  outcomes.
+
+  Data requirement: Minimum 50 closed trades with entry signal recorded.
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  T2 — REGIME CLASSIFICATION ACCURACY
+  ─────────────────────────────────────
+  Question: Are positions entered under the "correct" regime for the market
+  conditions that followed?
+
+  Method: For each closed trade, record the regime at entry. Compare the
+  price direction over the subsequent 5 bars against the classified regime.
+  A trending_up regime should be followed by upward price movement > 50%
+  of the time. A ranging regime should show no directional bias.
+
+  Pass criterion:
+    trending_up   → next-5-bar return > 0 in ≥ 55% of cases
+    trending_down → next-5-bar return < 0 in ≥ 55% of cases
+    ranging       → |next-5-bar return| < 1σ in ≥ 60% of cases
+    volatile      → any direction in ≥ 70% of cases (high |return|)
+
+  Fail indicator: trending_up regime followed by negative returns at the
+  same rate as ranging regime — indicates the trend classifier is not
+  separating market states meaningfully.
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  T3 — KELLY COLD-START SIZING AUDIT
+  ────────────────────────────────────
+  Question: Is MEGA's position size at trade #6 per pair materially larger
+  than at trade #5, and does trade #7+ perform worse than the Kelly estimate
+  would predict?
+
+  Method: For each pair, extract the sequence of trades and mark the index
+  at which Kelly activates (trade 6). Compare the realised return distribution
+  for trades 1–5 (flat 20% sizing) against trades 6+ (Kelly sizing).
+
+  Pass criterion: Trades 6+ should have higher average P&L than trades 1–5,
+  or at minimum no worse, since Kelly is sizing proportionally to estimated
+  edge.
+
+  Fail indicator: Trades 6+ show a lower win rate or lower average P&L than
+  the flat-sizing period. This indicates the Kelly activation is occurring
+  too early, before estimates are stable.
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  T4 — DEADWEIGHT EXIT COUNTERFACTUAL
+  ─────────────────────────────────────
+  Question: Do positions exited as deadweight have positive or negative
+  forward P&L if held for an additional 3–5 rounds?
+
+  Method: For each deadweight exit, record the price at exit and the price
+  3, 5, and 7 rounds later. Compute hypothetical P&L had the position been
+  held.
+
+  Pass criterion: Mean hypothetical P&L at +3 rounds should be near zero
+  (meaning deadweight exits are genuinely capturing stalled positions, not
+  cutting early winners).
+
+  Fail indicator: Mean hypothetical P&L at +5 rounds is > +1.5%. This
+  indicates that deadweight exits are systematically cutting positions just
+  before they develop, and the hold time should be raised further.
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  T5 — CVD GATE CONTRIBUTION ANALYSIS
+  ─────────────────────────────────────
+  Question: Is the cvd_norm > 0.02 entry gate adding positive value, or is
+  it simply reducing trade frequency without improving the quality of trades
+  that do occur?
+
+  Method: From DECISION-type events where signal_score passes Gate 1 and
+  Gate 3 but fails Gate 2 (CVD), record the subsequent price move for that
+  pair over the next 5 bars. Compare this against trades that passed all
+  three gates.
+
+  Pass criterion: The mean forward return for Gate-2-rejected signals should
+  be lower than for Gate-2-passed trades. The gate is earning its keep.
+
+  Fail indicator: Gate-2-rejected signals have similar or higher forward
+  returns than accepted trades. The CVD gate is filtering out good trades
+  and is miscalibrated.
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  T6 — THREAT MODE SURVIVAL AUDIT
+  ─────────────────────────────────
+  Question: Does threat mode activation actually improve MEGA's survival
+  outcome in the sessions where it fired?
+
+  Method: For each session in which threat mode activated, record: (a) the
+  win rate on trades taken during threat mode vs. trades outside threat mode
+  in the same session, and (b) whether MEGA survived the session.
+
+  Pass criterion: Threat-mode trade win rate ≥ normal-mode win rate, OR
+  survival rate in sessions where threat mode fired ≥ 70%.
+
+  Fail indicator: Threat-mode trades have a lower win rate than normal-mode
+  trades in the same session, AND MEGA elimination rate is elevated in
+  threat-mode sessions. This is the signature of F7 (accelerated ruin).
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  T7 — PEER AGENT PROXY VALIDITY
+  ────────────────────────────────
+  Question: Are A/B/G per-regime win rates correlated with MEGA's own
+  per-regime win rates in the same sessions?
+
+  Method: For sessions where MEGA has ≥ 3 trades in a given regime, compute
+  the Pearson correlation between A/B/G combined regime win rate and MEGA's
+  own regime win rate across all available sessions.
+
+  Pass criterion: Correlation ≥ 0.6 (moderate positive relationship).
+
+  Fail indicator: Correlation < 0.3 or negative. This would invalidate the
+  core assumption behind Rules 1, 2, 6, 7, and 8 — that A/B/G behaviour
+  is a valid proxy for MEGA. All five rules would need to be rebuilt using
+  MEGA-only data or a different proxy.
+
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 5 — RECOMMENDED EXPERIMENTS
+═══════════════════════════════════════════════════════════════════════════════
+
+Experiments are designed to produce evidence about specific design choices.
+Each is an A/B test or incremental change that can be evaluated within
+5–10 sessions. They are ordered by estimated information gain relative to
+implementation cost.
+
+  E1 — SIGNAL WEIGHT OPTIMISATION (HIGH PRIORITY)
+  ─────────────────────────────────────────────────
+  Hypothesis: The current signal weights (set manually) are not optimal.
+  In particular, funding_signal at 0.22 may be suppressing composite scores
+  in high-funding environments. A data-derived weight set would outperform
+  the manual one.
+
+  Method: After accumulating ≥ 200 closed trades with full signal vectors
+  at entry, run a logistic regression of (win/loss outcome) on the seven
+  normalised sub-signal values at entry. The resulting coefficients, when
+  renormalised to sum to 1.0, give a data-derived weight estimate. Compare
+  the implied trade selection against the current weight set.
+
+  Success metric: The regression-derived weights produce a higher in-sample
+  AUC than a naive equal-weight baseline. If funding's implied coefficient
+  is < 0.10, reduce its weight in the live config.
+
+  Implementation cost: LOW. Requires only a Python/R script against the
+  session export data.
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  E2 — REGIME HYSTERESIS BUFFER (HIGH PRIORITY)
+  ───────────────────────────────────────────────
+  Hypothesis: Discrete regime snapping at transition points (F1) causes
+  systematic entry-at-reversal. Adding a hysteresis buffer — requiring a
+  regime to be stable for N bars before its thresholds apply — would reduce
+  transition-window entries.
+
+  Method: Implement an optional `regime_min_bars` parameter (e.g. 3 bars).
+  A regime only becomes "active" if it has held for 3 consecutive bars.
+  During the transition window, use the previous confirmed regime's
+  thresholds, or apply the most conservative threshold across both regimes.
+
+  Run 10 sessions with `regime_min_bars = 3` vs. the current behaviour
+  (immediate snap). Compare stop-loss rate during regime transition events.
+
+  Success metric: Stop-loss rate within 3 bars of a regime change drops by
+  ≥ 20% relative to the control period.
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  E3 — KELLY WARM-UP RAMP (MEDIUM PRIORITY)
+  ───────────────────────────────────────────
+  Hypothesis: The 6-trade Kelly activation threshold produces cold-start
+  overbet risk (F2). A gradual ramp — blending flat size and Kelly size
+  proportionally as the trade count grows — would reduce this risk while
+  still transitioning to Kelly-based sizing.
+
+  Method:
+    trade_count < 6:     size = flat_size (20%)
+    trade_count 6–11:    size = flat_size × (1 − α) + kelly_size × α
+                         where α = (count − 6) / 6, linearly 0 → 1
+    trade_count ≥ 12:    size = kelly_size (fully Kelly)
+
+  Run 5 sessions with the ramp active and compare maximum per-session
+  drawdown vs. the control.
+
+  Success metric: Maximum single-trade loss as a fraction of capital at the
+  time of trade decreases by ≥ 15% in the first 12 trades per pair.
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  E4 — FUNDING WEIGHT REDUCTION TEST (MEDIUM PRIORITY)
+  ───────────────────────────────────────────────────────
+  Hypothesis: Reducing funding_signal weight from 0.22 to 0.12 will increase
+  trade frequency without materially degrading per-trade P&L. The freed
+  weight should be redistributed proportionally to cvd_norm and momentum_1h.
+
+  Proposed new weights: cvd_norm → 0.29, momentum_1h → 0.21,
+  funding_signal → 0.12, others unchanged.
+
+  Method: Run 5 sessions with the modified weights. Compare:
+    - Trades per session
+    - Win rate (should not decrease significantly)
+    - Average P&L per trade (should not decrease significantly)
+    - Stop-loss rate (should not increase significantly)
+
+  Success metric: Trades per session increases by ≥ 20% with win rate
+  degradation < 5pp. This would indicate that funding was suppressing valid
+  entries rather than filtering bad ones.
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  E5 — DEADWEIGHT HOLD-COST MEASUREMENT (MEDIUM PRIORITY)
+  ─────────────────────────────────────────────────────────
+  Hypothesis: The current deadweight threshold (|P&L| < 3%) is too wide.
+  Positions with +2% unrealised gain are being treated the same as positions
+  at −2%. A directional split — exit sooner if unrealised P&L is negative,
+  hold longer if it is flat-to-positive — would improve capital utilisation.
+
+  Proposed change: Split deadweight into two cases:
+    Deadweight-negative:  held ≥ 5 rounds AND unrealised P&L ∈ (−3%, 0%)
+    Deadweight-flat:      held ≥ 7 rounds AND unrealised P&L ∈ [0%, +3%)
+
+  The negative case exits sooner (cuts losers), the positive case holds
+  longer (gives small winners time to develop).
+
+  Run T4 (counterfactual analysis) on historical exits to estimate the
+  P&L improvement before implementing in the live config.
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  E6 — THREAT MODE THRESHOLD AUDIT (LOW PRIORITY, HIGH RISK)
+  ────────────────────────────────────────────────────────────
+  Hypothesis: The −0.08 signal threshold relaxation in threat mode is
+  arbitrary. A less aggressive relaxation (−0.04) might produce enough trades
+  to satisfy survival scoring while reducing the quality-degradation risk.
+
+  Method: In simulation, replay sessions where threat mode activated and
+  test three threat thresholds: −0.04, −0.08 (current), −0.12. Compare
+  trade count, win rate, and final capital at session end.
+
+  Note: This experiment should be run on historical data before any live
+  config change. The risk of getting this wrong is high — threat mode fires
+  exactly when MEGA is most vulnerable, and the wrong threshold degrades the
+  only chance of recovery.
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  E7 — MULTI-PROPOSAL PER SESSION (LOW PRIORITY)
+  ────────────────────────────────────────────────
+  Hypothesis: The single-proposal-per-session constraint causes excessive
+  adaptation lag when multiple parameters are simultaneously out of range
+  (F6). Allowing up to 2 proposals per session when more than one rule
+  fires, ordered by severity, would shorten the recovery window.
+
+  Design consideration: The operator approval requirement provides a natural
+  review gate. Showing 2 proposals simultaneously (ordered by priority score)
+  does not increase systemic risk if the operator reviews both. The
+  suppression logic (3 sessions after rejection) should apply independently
+  per rule, not globally.
+
+  Implementation cost: LOW — change is in detect-changes.js and the TUI
+  proposal overlay only.
+
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 6 — OPEN QUESTIONS
+═══════════════════════════════════════════════════════════════════════════════
+
+These are unresolved design questions that do not have a clean answer yet.
+They are recorded here to prevent them from being treated as resolved.
+
+  Q1: What is the correct metric for "survival" in the scoring system?
+      The current threat/survival system operates on undocumented criteria.
+      If the scoring function rewards trade frequency over P&L quality, it
+      creates a direct conflict with MEGA's low-frequency, high-conviction
+      design. The two objectives need explicit reconciliation.
+
+  Q2: How should regime multipliers interact with the conviction scalar?
+      Currently the regime multiplier is applied to the raw signal_score
+      before entry gating, while conviction is calculated after. This means
+      a borderline signal in a trending market could pass the gate but receive
+      a 0.5× conviction scalar, producing a position too small to be
+      meaningful. Should the conviction floor be regime-adjusted as well?
+
+  Q3: Is per-pair Kelly appropriate with only 15 pairs?
+      With 15 pairs and a minimum of 6 trades each, full Kelly activation
+      requires 90 trade instances, distributed unevenly across pairs. Some
+      pairs will be in flat-size mode for many sessions while others have
+      fully active Kelly. Should Kelly be estimated at the portfolio level
+      (all pairs combined) rather than per pair, to achieve statistical
+      significance sooner?
+
+  Q4: What is the intended relationship between sell_profit_pct and
+      regime? Currently take-profit at +12% is regime-invariant. In a
+      trending_up market, +12% may be premature (the trend can continue
+      much further). In a ranging market, +12% may be unreachable and the
+      take-profit trigger never fires. Should take-profit targets also carry
+      regime overrides?
+
+  Q5: Rules 1/2 (raise buy_signal) vs. 6/7 (lower buy_signal) remain
+      asymmetric: the raise conditions (win rate < 42%, avg PnL < −0.15%)
+      are easier to trigger than the lower conditions (win rate > 70%, avg
+      PnL > +0.50%). This creates a slow upward drift in buy_signal thresholds
+      over time unless conditions are consistently strong. Rules 8/8b and
+      9/9b are now symmetric (same session count, same step size, mirrored
+      thresholds), so the ratchet concern is resolved for sell_loss_pct and
+      deadweight_rounds_min. The asymmetry in buy_signal remains intentional
+      but its long-run effect on trade frequency should be monitored.
+
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 7 — SUMMARY RISK SCORECARD
+═══════════════════════════════════════════════════════════════════════════════
+
+  COMPONENT                      DESIGN QUALITY    EMPIRICAL VALIDATION
+  ─────────────────────────────────────────────────────────────────────────
+  Signal construction             ADEQUATE          WEAK (weights intuitive)
+  Regime classification           ADEQUATE          PARTIAL (no transition test)
+  Entry gating (3 gates)          GOOD              PARTIAL (CVD gate untested)
+  Position sizing (half-Kelly)    GOOD              WEAK (cold-start unvalidated)
+  Stop-loss (hard + intra-candle) GOOD              ADEQUATE
+  Take-profit                     ADEQUATE          WEAK (regime-invariant)
+  Deadweight logic                ADEQUATE          PARTIAL (F3 risk present)
+  Self-evolution pipeline         GOOD              GOOD
+  Threat mode                     WEAK              NOT VALIDATED
+  Peer proxy assumption           ADEQUATE          NOT VALIDATED
+
+  Overall: The mechanical structure of the strategy is sound. The primary
+  gaps are in empirical validation of signal weights, the threat mode
+  logic, and the regime classifier at transition points. These are also
+  the three areas with the highest potential impact on outcomes. They should
+  be addressed in approximately the priority order described in Section 5.
+
+═══════════════════════════════════════════════════════════════════════════════

@@ -48,6 +48,10 @@ const agentRegimeAvgPnl      = {}
 const agentRegimeStopLossRate = {}
 // agentRegimeAvgHoldRounds[agent][regime]= [avgHoldRounds_s1, ...]
 const agentRegimeAvgHoldRounds = {}
+// agentRegimeDeadweightRate[agent][regime]= [deadweightRate_s1, ...]
+const agentRegimeDeadweightRate = {}
+// megaDeadweightRate                     = [rate_s1, ...] (overall, all regimes)
+const megaDeadweightRate  = []
 // signalAccuracy[signal]                 = [accuracy_s1, ...]
 const signalAccuracy      = {}
 // sessionIds for reference
@@ -64,18 +68,27 @@ for (const session of sessions) {
     if (!agentRegimeWinRates[name]) agentRegimeWinRates[name] = {}
     if (!agentRegimeAvgPnl[name])   agentRegimeAvgPnl[name]   = {}
 
-    if (!agentRegimeStopLossRate[name])  agentRegimeStopLossRate[name]  = {}
-    if (!agentRegimeAvgHoldRounds[name]) agentRegimeAvgHoldRounds[name] = {}
+    if (!agentRegimeStopLossRate[name])    agentRegimeStopLossRate[name]    = {}
+    if (!agentRegimeAvgHoldRounds[name])   agentRegimeAvgHoldRounds[name]   = {}
+    if (!agentRegimeDeadweightRate[name])  agentRegimeDeadweightRate[name]  = {}
 
     for (const r of (agentMetrics.regimeStats || [])) {
-      if (!agentRegimeWinRates[name][r.regime])     agentRegimeWinRates[name][r.regime]     = []
-      if (!agentRegimeAvgPnl[name][r.regime])       agentRegimeAvgPnl[name][r.regime]       = []
-      if (!agentRegimeStopLossRate[name][r.regime]) agentRegimeStopLossRate[name][r.regime] = []
+      if (!agentRegimeWinRates[name][r.regime])      agentRegimeWinRates[name][r.regime]      = []
+      if (!agentRegimeAvgPnl[name][r.regime])        agentRegimeAvgPnl[name][r.regime]        = []
+      if (!agentRegimeStopLossRate[name][r.regime])  agentRegimeStopLossRate[name][r.regime]  = []
       if (!agentRegimeAvgHoldRounds[name][r.regime]) agentRegimeAvgHoldRounds[name][r.regime] = []
+      if (!agentRegimeDeadweightRate[name][r.regime]) agentRegimeDeadweightRate[name][r.regime] = []
       agentRegimeWinRates[name][r.regime].push(r.winRate)
       agentRegimeAvgPnl[name][r.regime].push(r.avgPnl)
-      if (r.stopLossRate   != null) agentRegimeStopLossRate[name][r.regime].push(r.stopLossRate)
-      if (r.avgHoldRounds  != null) agentRegimeAvgHoldRounds[name][r.regime].push(r.avgHoldRounds)
+      if (r.stopLossRate    != null) agentRegimeStopLossRate[name][r.regime].push(r.stopLossRate)
+      if (r.avgHoldRounds   != null) agentRegimeAvgHoldRounds[name][r.regime].push(r.avgHoldRounds)
+      if (r.deadweightRate  != null) agentRegimeDeadweightRate[name][r.regime].push(r.deadweightRate)
+    }
+
+    // Overall MEGA deadweight rate per session (across all regimes combined)
+    if (name === 'MEGA' && agentMetrics.tradeCount > 0) {
+      const dwCount = agentMetrics.byExit?.deadweight || 0
+      megaDeadweightRate.push(parseFloat(((dwCount / agentMetrics.tradeCount) * 100).toFixed(1)))
     }
   }
 
@@ -95,6 +108,8 @@ const trends = {
   agentRegimeAvgPnl,
   agentRegimeStopLossRate,
   agentRegimeAvgHoldRounds,
+  agentRegimeDeadweightRate,
+  megaDeadweightRate,
   signalAccuracy
 }
 

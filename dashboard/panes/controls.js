@@ -1,8 +1,11 @@
 'use strict'
 
-const VERSION = '1.0.4'
+const VERSION = '1.0.5'
 
+const os      = require('os')
 const blessed = require('blessed')
+
+const HOSTNAME = os.hostname()
 
 const INTERVALS       = [15000, 30000, 60000, 300000, 900000]
 const INTERVAL_LABELS = ['15s', '30s', '1m', '5m', '15m']
@@ -102,7 +105,7 @@ function create(parent, clientRef, logPane, screen) {
     const proposalStr = proposalReady ? '  {yellow-fg}★ Proposal ready — press [P]{/yellow-fg}' : ''
 
     statusBar.setContent(
-      `  ${connStr}   ${runStr}   Round: ${round}   Interval: ${INTERVAL_LABELS[intervalIdx]}   BTC: ${macroStr}${tradesStr}${proposalStr}`
+      `  ${connStr}   ${runStr}   Round: ${round}   Interval: ${INTERVAL_LABELS[intervalIdx]}   BTC: ${macroStr}${tradesStr}${proposalStr}   {grey-fg}${HOSTNAME}{/grey-fg}`
     )
     parent.screen.render()
   }

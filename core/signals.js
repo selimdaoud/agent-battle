@@ -161,14 +161,19 @@ async function fetchVolumeData(pairs, limit = 20, interval = '1h') {
  * Fetch the Crypto Fear & Greed Index (market-wide, not per-pair).
  * Returns a number 0–100: 0 = Extreme Fear, 100 = Extreme Greed.
  * Falls back to 50 (neutral) on error.
+ * Cached for 1 hour — the index only updates once per day.
  */
+let _fngCache = { value: 50, fetchedAt: 0 }
 async function fetchFearGreed() {
+  if (Date.now() - _fngCache.fetchedAt < 3600000) return _fngCache.value
   try {
-    const res  = await fetch('https://api.alternative.me/fng/?limit=1', { signal: AbortSignal.timeout(4000) })
-    const data = await res.json()
-    return parseInt(data.data[0].value, 10)
+    const res   = await fetch('https://api.alternative.me/fng/?limit=1', { signal: AbortSignal.timeout(4000) })
+    const data  = await res.json()
+    const value = parseInt(data.data[0].value, 10)
+    _fngCache = { value, fetchedAt: Date.now() }
+    return value
   } catch {
-    return 50  // neutral fallback
+    return _fngCache.value  // return last known value on error
   }
 }
 

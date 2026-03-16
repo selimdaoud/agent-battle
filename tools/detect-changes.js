@@ -18,6 +18,9 @@
  *   6. A/B/G combined regime win rate > 70% for 3+ sessions   → lower MEGA regime buy_signal
  *   7. A/B/G combined regime avg PnL > 0.50% for 3+ sessions  → lower MEGA regime buy_signal
  *   8. A/B/G combined stop_loss exit rate > 50% for 3+ sessions → raise MEGA regime sell_loss_pct (+1pp)
+ *  8b. A/B/G combined stop_loss exit rate < 15% for 3+ sessions → lower MEGA regime sell_loss_pct (−1pp, floor 4%)
+ *   9. MEGA deadweight exit rate > 40% for 3+ sessions           → raise strategy.deadweight_rounds_min (+2, max 15)
+ *  9b. MEGA deadweight exit rate < 15% for 3+ sessions           → lower strategy.deadweight_rounds_min (−2, floor 5)
  *
  * Only ONE proposal is written at a time (highest confidence first).
  * Rejected proposals are suppressed for REJECT_COOLDOWN sessions.
@@ -46,10 +49,17 @@ const SIGNAL_STEP              = 0.10  // relative weight change (10%)
 const EXPECTANCY_LOW           = -0.15 // avg PnL% below this → tighten (rule 2)
 const EXPECTANCY_HIGH          = 0.50  // avg PnL% above this → loosen (rule 7 — missing volume)
 const BUY_SIGNAL_FLOOR         = 0.05  // never propose lowering buy_signal below this
-const STOP_LOSS_HIGH_THRESHOLD = 50    // stop_loss exit rate above this → stop too tight (rule 8)
-const SELL_LOSS_STEP           = 1     // percentage points to widen stop-loss per proposal
-const SELL_LOSS_CEILING        = 12    // never propose sell_loss_pct above this
-const PEERS                    = ['ALPHA', 'BETA', 'GAMMA']
+const STOP_LOSS_HIGH_THRESHOLD    = 50    // stop_loss exit rate above this → stop too tight (rule 8)
+const STOP_LOSS_LOW_THRESHOLD     = 15    // stop_loss exit rate below this → stop may be too wide (rule 8b)
+const SELL_LOSS_STEP              = 1     // percentage points to change stop-loss per proposal
+const SELL_LOSS_CEILING           = 12    // never propose sell_loss_pct above this
+const SELL_LOSS_FLOOR             = 4     // never propose sell_loss_pct below this
+const DEADWEIGHT_HIGH_THRESHOLD   = 40    // MEGA deadweight exit rate above this → rounds too short (rule 9)
+const DEADWEIGHT_LOW_THRESHOLD    = 15    // MEGA deadweight exit rate below this → rounds too long (rule 9b)
+const DEADWEIGHT_STEP             = 2     // rounds to change per proposal
+const DEADWEIGHT_CEILING          = 15    // never propose deadweight_rounds_min above this
+const DEADWEIGHT_FLOOR            = 5     // never propose deadweight_rounds_min below this
+const PEERS                       = ['ALPHA', 'BETA', 'GAMMA']
 
 // ── Build session-aligned combined A/B/G trend arrays ────────────────────────
 // Each agent's array may be shorter than total session count — assumed to
@@ -153,6 +163,16 @@ function stopLossCandidate(regime, confidence, basis, justification) {
   return { confidence, field, current, proposed, basis, justification: justification(current, proposed) }
 }
 
+/** Build a regime sell_loss_pct tightening candidate (stop too wide) */
+function stopLossTightenCandidate(regime, confidence, basis, justification) {
+  const field   = `regime_overrides.${regime}.sell_loss_pct`
+  if (rejectedRecently(field)) return null
+  const current = megaCfg.regime_overrides?.[regime]?.sell_loss_pct ?? megaCfg.strategy.sell_loss_pct
+  if (current <= SELL_LOSS_FLOOR) return null
+  const proposed = current - SELL_LOSS_STEP
+  return { confidence, field, current, proposed, basis, justification: justification(current, proposed) }
+}
+
 // ── Build combined A/B/G baselines ───────────────────────────────────────────
 const combinedWinRates     = buildCombined(trends.agentRegimeWinRates)
 const combinedAvgPnl       = buildCombined(trends.agentRegimeAvgPnl)
@@ -240,6 +260,76 @@ for (const [regime, rates] of Object.entries(combinedStopLossRate)) {
       `positions are being closed before they have room to recover. ` +
       `Widening to ${prop}% reduces noise-stop frequency without materially increasing max loss per trade.`)
   if (c) candidates.push(c)
+}
+
+// ── Rule 8b: Stop-loss hit rate persistently low — stop may be too wide ───────
+for (const [regime, rates] of Object.entries(combinedStopLossRate)) {
+  if (rates.length < REGIME_SESSIONS_MIN) continue
+  const recent = last(rates, REGIME_SESSIONS_MIN)
+  if (mean(recent) >= STOP_LOSS_LOW_THRESHOLD) continue
+  const avg      = mean(recent).toFixed(1)
+  const trendStr = recent.map(v => `${v.toFixed(0)}%`).join(', ')
+  const c = stopLossTightenCandidate(regime, REGIME_SESSIONS_MIN,
+    `${REGIME_SESSIONS_MIN} sessions — A/B/G combined ${regime} stop_loss exit rate: ${avg}% (low)`,
+    (cur, prop) =>
+      `A/B/G agents were stopped out on only ${avg}% of ${regime}-regime trades over the last ${REGIME_SESSIONS_MIN} sessions (${trendStr}), ` +
+      `below the ${STOP_LOSS_LOW_THRESHOLD}% threshold. The current ${regime} stop at ${cur}% may be giving back ` +
+      `more P&L on losing trades than necessary. Tightening to ${prop}% recovers some of that without meaningfully ` +
+      `increasing the stop-out frequency given current conditions.`)
+  if (c) candidates.push(c)
+}
+
+// ── Rule 9: MEGA deadweight exit rate persistently high — rounds too short ────
+const megaDwRates = trends.megaDeadweightRate || []
+if (megaDwRates.length >= REGIME_SESSIONS_MIN) {
+  const recent = last(megaDwRates, REGIME_SESSIONS_MIN)
+  if (mean(recent) > DEADWEIGHT_HIGH_THRESHOLD) {
+    const field   = 'strategy.deadweight_rounds_min'
+    const current = megaCfg.strategy.deadweight_rounds_min ?? 5
+    if (!rejectedRecently(field) && current < DEADWEIGHT_CEILING) {
+      const proposed  = current + DEADWEIGHT_STEP
+      const avg       = mean(recent).toFixed(1)
+      const trendStr  = recent.map(v => `${v.toFixed(0)}%`).join(', ')
+      candidates.push({
+        confidence:    REGIME_SESSIONS_MIN + 1,
+        field,
+        current,
+        proposed,
+        basis:         `${REGIME_SESSIONS_MIN} sessions — MEGA deadweight exit rate: ${avg}%`,
+        justification: `MEGA exited ${avg}% of positions as deadweight over the last ${REGIME_SESSIONS_MIN} sessions ` +
+          `(${trendStr}), above the ${DEADWEIGHT_HIGH_THRESHOLD}% threshold. Positions are being flagged as ` +
+          `stale before they have time to develop — the current ${current}-round minimum is too short for MEGA's ` +
+          `capital size and the pairs it trades. Raising to ${proposed} rounds gives positions more time to move ` +
+          `before triggering a deadweight exit.`
+      })
+    }
+  }
+}
+
+// ── Rule 9b: MEGA deadweight exit rate persistently low — rounds too long ─────
+if (megaDwRates.length >= REGIME_SESSIONS_MIN) {
+  const recent = last(megaDwRates, REGIME_SESSIONS_MIN)
+  if (mean(recent) < DEADWEIGHT_LOW_THRESHOLD) {
+    const field   = 'strategy.deadweight_rounds_min'
+    const current = megaCfg.strategy.deadweight_rounds_min ?? 5
+    if (!rejectedRecently(field) && current > DEADWEIGHT_FLOOR) {
+      const proposed  = current - DEADWEIGHT_STEP
+      const avg       = mean(recent).toFixed(1)
+      const trendStr  = recent.map(v => `${v.toFixed(0)}%`).join(', ')
+      candidates.push({
+        confidence:    REGIME_SESSIONS_MIN + 1,
+        field,
+        current,
+        proposed,
+        basis:         `${REGIME_SESSIONS_MIN} sessions — MEGA deadweight exit rate: ${avg}% (low)`,
+        justification: `MEGA exited only ${avg}% of positions as deadweight over the last ${REGIME_SESSIONS_MIN} sessions ` +
+          `(${trendStr}), below the ${DEADWEIGHT_LOW_THRESHOLD}% threshold. Positions are consistently moving before ` +
+          `the deadweight timer fires — the current ${current}-round minimum may be higher than necessary. ` +
+          `Lowering to ${proposed} rounds frees capital sooner in genuinely stalled situations ` +
+          `without cutting positions that are still developing.`
+      })
+    }
+  }
 }
 
 // ── Rules 4 & 5: Signal accuracy persistently high/low ───────────────────────

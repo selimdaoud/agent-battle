@@ -1,0 +1,60 @@
+{
+  "meta": {
+    "version": 19,
+    "createdAt": "2026-03-11T00:00:00Z",
+    "note": "Updated after session 16 — regime_overrides.ranging.buy_signal: 0.37 → 0.4",
+    "lastUpdated": "2026-03-14T12:12:44.124Z"
+  },
+  "archetype": {
+    "label": "Adaptive Synthesizer",
+    "constraint": "You adapt your aggression to market regime. In trending markets you ride momentum. In ranging or volatile markets you reduce exposure and wait for conviction.",
+    "survivalBonus": "adaptability"
+  },
+  "strategy": {
+    "buy_signal": 0.15,
+    "sell_signal": -0.12,
+    "cvd_buy_min": 0.02,
+    "cvd_sell_max": -0.25,
+    "funding_buy_max": 0.55,
+    "sell_loss_pct": 6,
+    "sell_profit_pct": 12,
+    "cash_min_pct": 0.25,
+    "max_positions": 3,
+    "buy_size_pct": 0.2,
+    "deadweight_rounds_min": 15
+  },
+  "regime_overrides": {
+    "ranging": {
+      "buy_signal": 0.4,
+      "buy_size_pct": 0.12
+    },
+    "volatile": {
+      "buy_signal": 0.3,
+      "cash_min_pct": 0.4
+    },
+    "trending_down": {
+      "buy_signal": 0.25,
+      "sell_loss_pct": 4
+    },
+    "trending_up": {
+      "buy_signal": 0.21
+    }
+  },
+  "signal_weights": {
+    "funding_signal": 0.22,
+    "cvd_norm": 0.25,
+    "momentum_1h": 0.18,
+    "rsi_norm": 0.12,
+    "fear_greed_signal": 0.08,
+    "volume_zscore": 0.1,
+    "momentum_4h": 0.05
+  },
+  "threat_playbook": [
+    "[v14] After 11 sessions: strategy.deadweight_rounds_min adjusted 7 → 9. Basis: 3 sessions — MEGA deadweight exit rate: 66.7%.",
+    "[v15] After 12 sessions: strategy.deadweight_rounds_min adjusted 9 → 11. Basis: 3 sessions — MEGA deadweight exit rate: 66.7%.",
+    "[v16] After 13 sessions: strategy.deadweight_rounds_min adjusted 11 → 13. Basis: 3 sessions — MEGA deadweight exit rate: 100.0%.",
+    "[v17] After 14 sessions: strategy.deadweight_rounds_min adjusted 13 → 15. Basis: 3 sessions — MEGA deadweight exit rate: 66.7%.",
+    "[v18] After 15 sessions: regime_overrides.ranging.buy_signal adjusted 0.34 → 0.37. Basis: 3 sessions — A/B/G combined ranging avg win rate: 25.9%.",
+    "[v19] After 16 sessions: regime_overrides.ranging.buy_signal adjusted 0.37 → 0.4. Basis: 3 sessions — A/B/G combined ranging avg win rate: 31.5%."
+  ]
+}

@@ -50,6 +50,13 @@ function roundsHeld(pair, ctx) {
   return ctx.entryRounds[pair] != null ? ctx.round - ctx.entryRounds[pair] : 0
 }
 
+/** Override-aware deadweight check. roundsMin defaults to C.DEADWEIGHT_ROUNDS. */
+function isDeadweightRounds(pair, ctx, roundsMin) {
+  const held = roundsHeld(pair, ctx)
+  const pct  = unrealizedPct(pair, ctx)
+  return held >= roundsMin && pct != null && Math.abs(pct) < 3
+}
+
 /** Pairs held by both rivals simultaneously. */
 function rivalConsensus(ctx) {
   const rivalHoldings = ctx.rivals.map(r =>
@@ -123,7 +130,6 @@ function alphaDecide(ctx, smap, threatened) {
     if (qty <= 0) continue
     const s   = smap[pair]
     if (!s) continue
-    const pct = unrealizedPct(pair, ctx)
 
     const momentumReversed  = s.signal_score < (cfg.sell_signal + threatAdj)
     const sellingPressure   = s.cvd_norm < cfg.cvd_sell_max
@@ -352,17 +358,24 @@ function gammaDecide(ctx, smap, threatened) {
  * Regime-aware strategy loaded from agents/mega-config.json.
  * Applies regime_overrides on top of base thresholds for each market condition.
  */
-function megaDecide(ctx, smap, threatened) {
-  const baseCfg = megaConfig.strategy
-  const regime  = ctx.signals[0]?.regime || 'trending_up'
-  const ov      = megaConfig.regime_overrides[regime] || {}
-  const cfg     = { ...baseCfg, ...ov }
+/** Per-pair config: base strategy merged with the pair's own regime override. */
+function pairCfg(pairRegime) {
+  return { ...megaConfig.strategy, ...(megaConfig.regime_overrides[pairRegime] || {}) }
+}
 
+function megaDecide(ctx, smap, threatened) {
+  const baseCfg   = megaConfig.strategy
   const threatAdj = threatened ? 0.08 : 0
 
-  // ── SELL: scan holdings for exits ──────────────────────────────────────────
-  let exitPair = null
-  let exitWhy  = ''
+  // Portfolio-level regime (BTC / first signal): used only for cash reserve
+  // and max_positions checks, which are whole-portfolio concerns.
+  const portfolioRegime = ctx.signals[0]?.regime || 'trending_up'
+  const portfolioCfg    = pairCfg(portfolioRegime)
+
+  // ── SELL: each held pair evaluated against its own current regime ───────────
+  let exitPair   = null
+  let exitWhy    = ''
+  let exitRegime = ''
 
   for (const [pair, qty] of Object.entries(ctx.holdings)) {
     if (qty <= 0) continue
@@ -370,19 +383,23 @@ function megaDecide(ctx, smap, threatened) {
     if (!s) continue
     const pct = unrealizedPct(pair, ctx)
 
+    const cfg        = pairCfg(s.regime || 'ranging')
     const stopOut    = pct != null && pct < -cfg.sell_loss_pct
     const flowBad    = s.cvd_norm < cfg.cvd_sell_max
     const sigGone    = s.signal_score < (cfg.sell_signal + threatAdj)
     const takePft    = pct != null && pct > cfg.sell_profit_pct && s.cvd_norm < 0
-    const deadweight = isDeadweight(pair, ctx)
+    const dwRounds   = baseCfg.deadweight_rounds_min ?? C.DEADWEIGHT_ROUNDS
+    const deadweight = isDeadweightRounds(pair, ctx, dwRounds)
 
     if (stopOut) {
-      exitPair = pair
-      exitWhy  = `loss exceeds ${cfg.sell_loss_pct}% (${pct.toFixed(1)}%) — capital protection`
+      exitPair   = pair
+      exitRegime = s.regime || 'ranging'
+      exitWhy    = `loss exceeds ${cfg.sell_loss_pct}% (${pct.toFixed(1)}%) — capital protection`
       break
     }
     if (!exitPair && (flowBad || sigGone || takePft || deadweight)) {
-      exitPair = pair
+      exitPair   = pair
+      exitRegime = s.regime || 'ranging'
       if      (takePft)    exitWhy = `profit target ${cfg.sell_profit_pct}% reached (${pct.toFixed(1)}%) with flow turning`
       else if (flowBad)    exitWhy = `selling pressure (cvd=${s.cvd_norm.toFixed(2)})`
       else if (deadweight) exitWhy = `deadweight after ${roundsHeld(pair, ctx)} rounds`
@@ -396,44 +413,48 @@ function megaDecide(ctx, smap, threatened) {
       action:       'SELL',
       pair:         exitPair,
       amount_usd:   0,
-      reasoning:    `MEGA [${regime}] exiting ${C.LABELS[exitPair] || exitPair}: ${exitWhy}.`,
+      reasoning:    `MEGA [${exitRegime}] exiting ${C.LABELS[exitPair] || exitPair}: ${exitWhy}.`,
       signal_score: s?.signal_score ?? 0
     }
   }
 
-  // ── BUY: find best candidate under regime-adjusted thresholds ──────────────
+  // ── BUY: portfolio-level guards, then per-pair thresholds ──────────────────
   const positions = positionCount(ctx)
-  if (positions >= cfg.max_positions) return holdDecision(`MEGA [${regime}]: max positions reached`)
+  if (positions >= portfolioCfg.max_positions) return holdDecision('MEGA: max positions reached')
 
   const cashRatio = ctx.capital / ctx.totalValue
-  if (cashRatio < cfg.cash_min_pct && !threatened) {
-    return holdDecision(`MEGA [${regime}]: cash reserve too low (${(cashRatio * 100).toFixed(0)}% < ${cfg.cash_min_pct * 100}%)`)
+  if (cashRatio < portfolioCfg.cash_min_pct && !threatened) {
+    return holdDecision(`MEGA: cash reserve too low (${(cashRatio * 100).toFixed(0)}% < ${portfolioCfg.cash_min_pct * 100}%)`)
   }
 
   const candidates = ctx.signals
-    .filter(s =>
-      s.signal_score   > (cfg.buy_signal - threatAdj) &&
-      s.cvd_norm       > (threatened ? 0 : cfg.cvd_buy_min) &&
-      s.funding_signal < cfg.funding_buy_max &&
-      !ctx.holdings[s.pair] &&
-      positions < C.MAX_POSITIONS
-    )
+    .filter(s => {
+      const cfg = pairCfg(s.regime || 'ranging')
+      return (
+        s.signal_score   > (cfg.buy_signal - threatAdj) &&
+        s.cvd_norm       > (threatened ? 0 : cfg.cvd_buy_min) &&
+        s.funding_signal < cfg.funding_buy_max &&
+        !ctx.holdings[s.pair] &&
+        positions < C.MAX_POSITIONS
+      )
+    })
     .sort((a, b) => b.signal_score - a.signal_score)
 
   if (candidates.length > 0) {
-    const s      = candidates[0]
-    const amount = buyAmount(s.pair, s.signal_score, ctx, cfg)
+    const s          = candidates[0]
+    const cfg        = pairCfg(s.regime || 'ranging')
+    const amount     = buyAmount(s.pair, s.signal_score, ctx, cfg)
     if (amount < Math.max(ctx.capital * 0.005, 1)) return holdDecision('MEGA: insufficient capital for sizing')
     return {
       action:       'BUY',
       pair:         s.pair,
       amount_usd:   amount,
-      reasoning:    `MEGA [${regime}] entering ${C.LABELS[s.pair] || s.pair}: score=${s.signal_score.toFixed(2)}, cvd=${s.cvd_norm.toFixed(2)}, fund=${s.funding_signal.toFixed(2)}. Threshold=${cfg.buy_signal.toFixed(2)} (regime-adjusted).`,
+      reasoning:    `MEGA [${s.regime}] entering ${C.LABELS[s.pair] || s.pair}: score=${s.signal_score.toFixed(2)}, cvd=${s.cvd_norm.toFixed(2)}, fund=${s.funding_signal.toFixed(2)}. Threshold=${cfg.buy_signal.toFixed(2)} (${s.regime}).`,
       signal_score: s.signal_score
     }
   }
 
-  return holdDecision(`MEGA [${regime}]: no signal above threshold ${cfg.buy_signal.toFixed(2)}`)
+  return holdDecision('MEGA: no pair cleared per-pair regime thresholds')
 }
 
 // ── HOLD fallback ─────────────────────────────────────────────────────────────

@@ -1,0 +1,376 @@
+MEGA STRATEGY — Human-Readable Reference
+Version 12 | Last updated: 2026-03-14
+═══════════════════════════════════════════════════════════════════════════════
+
+
+ARCHETYPE: Adaptive Synthesizer
+────────────────────────────────
+MEGA is not a momentum trader, a contrarian, or a pure risk manager. It is a
+regime-aware generalist that shifts its aggression level based on what the market
+is doing. In trending markets it follows momentum. In uncertain or choppy
+conditions it pulls back and demands stronger conviction before committing
+capital. This adaptability is its core edge, and also its primary survival
+criterion.
+
+
+═══════════════════════════════════════════════════════════════════════════════
+PART 1 — HOW SIGNALS ARE BUILT
+═══════════════════════════════════════════════════════════════════════════════
+
+Every tick, each of the 15 traded pairs receives a composite signal_score in
+the range [-1, +1]. This score is the weighted sum of seven sub-signals, each
+normalised independently before combining.
+
+  SIGNAL              WEIGHT    WHAT IT MEASURES
+  ────────────────────────────────────────────────────────────────────────────
+  cvd_norm            0.25      Cumulative Volume Delta — net taker buy vs sell
+                                pressure over the last 20 bars. Positive means
+                                buyers are aggressing; negative means sellers.
+                                Highest weight because order flow is the most
+                                direct evidence of real intent in the market.
+
+  funding_signal      0.22      Perpetual futures funding rate, inverted as a
+                                contrarian signal. High positive funding means
+                                longs are crowded and paying shorts — a bearish
+                                lean. High negative funding means shorts are
+                                crowded — a bullish lean. Used here to avoid
+                                entering when a move is already overextended
+                                in positioning terms.
+
+  momentum_1h         0.18      Z-score of the last 1-bar return against the
+                                20-bar rolling standard deviation of returns.
+                                Measures whether recent price movement is
+                                statistically significant or just noise. A high
+                                z-score means the move is outsized relative to
+                                recent history — genuine momentum.
+
+  rsi_norm            0.12      Wilder RSI(14), normalised to [-1, +1] by
+                                (rsi - 50) / 50. Acts as a mild mean-reversion
+                                check — prevents buying into extreme overbought
+                                conditions. Lower weight because RSI is a lagging
+                                indicator that often conflicts with trend signals.
+
+  volume_zscore       0.10      Z-score of last bar's volume against recent
+                                history. High volume confirms price moves;
+                                low volume suggests weak, potentially false
+                                breakouts.
+
+  fear_greed_signal   0.08      Crypto Fear & Greed Index (0–100), normalised
+                                to [-1, +1] as a contrarian mid-term signal.
+                                Extreme Fear (0) → +1; Extreme Greed (100) → -1.
+                                Low weight because it is market-wide and updated
+                                once daily — useful context, not a timing signal.
+
+  momentum_4h         0.05      Same z-score calculation as momentum_1h but on
+                                a 4-hour synthetic timeframe (every 4th close).
+                                Provides a higher-timeframe momentum check to
+                                avoid fighting a dominant trend.
+
+The raw weighted sum is then multiplied by a regime multiplier and clamped to
+[-1, +1]. This means the same underlying data can produce a stronger or weaker
+signal depending on the market regime (see Part 2).
+
+
+═══════════════════════════════════════════════════════════════════════════════
+PART 2 — REGIME DETECTION
+═══════════════════════════════════════════════════════════════════════════════
+
+Before any trading decision is made, each pair is classified into one of four
+regimes using its last 20 closes:
+
+  volatile       Annualised realised volatility > 80%. The market is moving
+                 violently in any direction. Signal quality degrades in this
+                 environment because z-scores lose meaning when distributions
+                 are fat-tailed.
+
+  trending_up    ADX proxy > 1.1 OR SMA slope > +0.3% over 5 bars, AND slope
+                 is positive. Directional momentum dominates noise. Entries
+                 have higher expected value when riding an established trend.
+
+  trending_down  Same trend detection as above, but slope is negative. The
+                 market is in a sustained decline.
+
+  ranging        No significant trending signal. Price is oscillating without
+                 a clear direction. Mean-reversion setups occur here, but false
+                 breakouts are common.
+
+Regime is computed independently per pair. BTC may be trending_up while SOL
+is ranging and ETH is volatile — each pair carries its own regime label in its
+signal vector. MEGA uses each pair's own regime when evaluating entry and exit
+thresholds for that specific pair. This eliminates cross-asset contamination
+where a dominant pair's regime was previously imposing its thresholds on all
+other pairs.
+
+The sole exception is the portfolio-level cash reserve check, which uses BTC's
+regime (first signal) as a proxy for overall market conditions — since cash
+reserve is a whole-portfolio decision, not a per-pair one.
+
+
+═══════════════════════════════════════════════════════════════════════════════
+PART 3 — ENTRY LOGIC (BUY)
+═══════════════════════════════════════════════════════════════════════════════
+
+MEGA evaluates each pair independently against that pair's own regime-adjusted
+thresholds, then buys the highest signal_score pair that passes all three gates:
+
+  Gate 1 — Signal threshold (pair's own regime):
+    Base:           signal_score > 0.15
+    trending_up:    signal_score > 0.21   (slightly above base — trend is
+                                           confirmed, but a higher bar was added
+                                           after sessions showed poor trending_up
+                                           PnL at lower thresholds)
+    trending_down:  signal_score > 0.25   (tighter — do not buy into a falling
+                                           market without strong conviction)
+    volatile:       signal_score > 0.30   (much tighter — high vol means
+                                           signals are noisy and reversals are
+                                           fast; preserve cash)
+    ranging:        signal_score > 0.34   (tightest of all — raised from 0.31
+                                           after ranging win rates fell below
+                                           28% across 3 sessions; ranging markets
+                                           are the hardest environment to trade
+                                           directionally)
+
+  Gate 2 — Flow confirmation:
+    cvd_norm > 0.02 (effectively: net buy pressure must be slightly positive)
+    Rationale: even a weak positive CVD confirms that buyers are present in the
+    market. A strong signal_score with negative CVD often means the price
+    moved but the money didn't follow — a false signal.
+
+  Gate 3 — Positioning filter:
+    funding_signal < 0.55 (raw funding rate roughly below +0.00055)
+    Rationale: if longs are already heavily crowded (high positive funding),
+    entering now means buying into a position that is already extended. The
+    risk/reward is asymmetric to the downside.
+
+  Additionally:
+    - MEGA will not open a new position if it already holds 3 open positions
+      (max_positions). Concentration risk beyond 3 becomes difficult to manage
+      at MEGA's capital level.
+    - MEGA will not open a new position if cash is below 25% of total portfolio
+      value (40% in volatile regimes). This ensures there is always dry powder
+      for opportunities and stops MEGA from becoming fully illiquid.
+
+  THREAT MODE:
+    When threatened (survival system has flagged MEGA), both thresholds ease:
+    signal threshold drops by 0.08, CVD gate is relaxed to > 0. The rationale
+    is that when threatened, holding cash passively is the fastest path to
+    elimination — some action, even lower-conviction, is better than none.
+
+
+═══════════════════════════════════════════════════════════════════════════════
+PART 4 — POSITION SIZING
+═══════════════════════════════════════════════════════════════════════════════
+
+Position size is determined by two compounding factors:
+
+  1. Half-Kelly fraction
+     Once a pair has at least 6 closed trades in history, MEGA uses the
+     Half-Kelly formula:
+
+       f_half = 0.5 × (b × p − q) / b
+
+     Where:
+       p = win rate on this specific pair (as a decimal)
+       q = 1 − p (loss rate)
+       b = avgWin / avgLoss (payoff ratio)
+
+     Using half-Kelly (rather than full Kelly) is a deliberate risk-reduction
+     choice. Full Kelly maximises long-run growth but produces very large
+     drawdowns. Half-Kelly gives ~75% of the growth rate with significantly
+     lower volatility of outcomes.
+
+     If Kelly returns ≤ 0 (negative expectancy), no position is taken at all
+     regardless of signal strength.
+
+     If there is insufficient history (<6 trades on a pair), the base size
+     fraction of 20% is used as a flat fallback.
+
+     The Kelly fraction is capped at 2× the base size (40% of capital) to
+     prevent runaway over-betting on a lucky streak.
+
+  2. Conviction scalar
+     The Kelly fraction is then multiplied by a conviction factor derived from
+     the signal_score:
+
+       conviction = clamp(|signal_score| / 0.5, 0.5, 1.0)
+
+     A signal_score of 0.50 gives full conviction (1.0×). A signal near the
+     entry threshold (e.g. 0.15) gives minimum conviction (0.5×). The idea is
+     that a borderline signal should result in a smaller bet than a high-
+     confidence signal, even if both clear the entry gate.
+
+  The minimum tradeable amount is max(capital × 0.005, $1). Below this, MEGA
+  holds rather than opening a position too small to be meaningful relative to
+  fees.
+
+
+═══════════════════════════════════════════════════════════════════════════════
+PART 5 — EXIT LOGIC (SELL)
+═══════════════════════════════════════════════════════════════════════════════
+
+Each held position is evaluated against the exit thresholds of its own current
+regime — not a session-wide regime. This means a trending_down position gets
+the tighter 4% stop even if BTC is currently ranging. Exit checks are evaluated
+in strict priority order. The first trigger that fires wins.
+
+  Priority 1 — Hard stop-loss (immediate):
+    Exit if unrealised P&L < −6% (−4% in trending_down regime).
+    This is non-negotiable. No signal strength, no market context overrides it.
+    The tighter stop in trending_down reflects that in a falling market,
+    losers tend to keep falling; cutting sooner limits damage.
+    Stop-loss also fires intra-candle via a separate lightweight scan (not just
+    at candle close), so a fast move does not require waiting a full tick.
+
+  Priority 2 — Soft exits (first qualifying position exits):
+    Any of the following triggers a sell of the first qualifying position found:
+
+    a) Momentum gone: signal_score < −0.12 (sell_signal threshold)
+       The composite signal has turned clearly bearish. The thesis that drove
+       the entry no longer holds.
+
+    b) Selling pressure: cvd_norm < −0.25
+       Despite the signal score, real money is leaving. CVD turning strongly
+       negative means sellers are aggressively hitting bids — a direct threat
+       to the position regardless of other indicators.
+
+    c) Take-profit: unrealised P&L > +12% AND cvd_norm < 0
+       Lock in gains when a meaningful profit target is reached AND flow is
+       starting to turn. The CVD condition prevents premature exit on a strong
+       trending move — MEGA will only take profit if flow is weakening.
+
+    d) Deadweight: held ≥ 5 rounds AND |unrealised P&L| < 3%
+       If a position has been held for at least 5 rounds (currently 75 minutes
+       at 15m intervals) without moving meaningfully in either direction,
+       capital is being wasted. Deadweight exits free up capacity for better
+       setups. The 5-round minimum is itself a learnable parameter — if MEGA
+       is exiting too many positions as deadweight before they develop, the
+       pipeline will propose raising this threshold.
+
+  THREAT MODE:
+    When threatened, the sell_signal threshold eases by 0.08 (i.e. MEGA
+    tolerates more negative signal before exiting, since it needs to stay
+    active to accumulate trades for survival scoring).
+
+
+═══════════════════════════════════════════════════════════════════════════════
+PART 6 — SELF-EVOLUTION (the proposal pipeline)
+═══════════════════════════════════════════════════════════════════════════════
+
+MEGA's config is not static. After each session, a post-session pipeline runs
+automatically:
+
+  1. export-session.js    Captures all closed trades, signals at entry, exit
+                          reasons, regime context, and per-pair P&L.
+
+  2. report-session.js    Generates per-regime win rates, average P&L,
+                          stop-loss rates, deadweight rates, and signal
+                          accuracy into a structured analysis file.
+
+  3. compare-sessions.js  Builds trend arrays across all sessions into
+                          trends.json (e.g. ranging win rates over last 9
+                          sessions, MEGA deadweight exit rates, etc.)
+
+  4. detect-changes.js    Applies rules against the trend data. Each rule
+                          checks whether a pattern has persisted for at least
+                          3 consecutive sessions before proposing a change.
+                          Only ONE proposal is generated per session.
+
+  Current rules:
+    Rule 1: A/B/G combined regime win rate < 42% for 3 sessions
+            → raise MEGA regime buy_signal threshold (+0.03)
+
+    Rule 2: A/B/G combined regime avg PnL < −0.15% for 3 sessions
+            → raise MEGA regime buy_signal threshold (+0.03)
+
+    Rule 6: A/B/G combined regime win rate > 70% for 3 sessions
+            → lower MEGA regime buy_signal threshold (−0.03, not below 0.05)
+
+    Rule 7: A/B/G combined regime avg PnL > +0.50% for 3 sessions
+            → lower MEGA regime buy_signal threshold (−0.03)
+
+    Rule 8: A/B/G combined regime stop-loss exit rate > 50% for 3 sessions
+            → raise MEGA regime sell_loss_pct (+1pp, max 12%)
+
+    Rule 8b: A/B/G combined regime stop-loss exit rate < 15% for 3 sessions
+            → lower MEGA regime sell_loss_pct (−1pp, floor 4%). The stop is
+            wider than current conditions require; tightening recovers P&L
+            on losing trades without increasing stop-out frequency.
+
+    Rule 9: MEGA own deadweight exit rate > 40% overall for 3 sessions
+            → raise strategy.deadweight_rounds_min (+2 rounds, max 15)
+
+    Rule 9b: MEGA own deadweight exit rate < 15% overall for 3 sessions
+            → lower strategy.deadweight_rounds_min (−2 rounds, floor 5).
+            Positions are consistently moving before the timer fires —
+            the minimum hold time has been raised above what conditions
+            require and should be allowed to come back down.
+
+  Rules 1, 2, 6, 7, 8 use A/B/G peer agents as market proxies rather than
+  MEGA's own sparse data. MEGA's small capital ($500) means it trades far less
+  frequently than the $1M agents, so 3 sessions of MEGA-only data may be 6–10
+  trades — too thin for reliable statistics. A/B/G combined across the same
+  regime provides a far more stable signal.
+
+  Rule 9 uses MEGA's own exits because deadweight behaviour is agent-specific
+  (driven by MEGA's capital size and the pairs it holds), not a market-wide
+  regime condition.
+
+  A proposed change is shown in the TUI as an overlay with the full
+  justification. The operator approves or rejects it. Rejected proposals are
+  suppressed for 3 sessions before being re-evaluated. A backup of
+  mega-config.json with a timestamp is saved before every approved change.
+
+
+═══════════════════════════════════════════════════════════════════════════════
+PART 7 — EVOLUTION HISTORY (summary)
+═══════════════════════════════════════════════════════════════════════════════
+
+  v7–v11  regime_overrides.trending_up.buy_signal: 0.18 → 0.21
+          Triggered by 3 sessions of negative A/B/G trending_up avg PnL
+          (−0.270%). The threshold was too permissive in uptrend — too many
+          borderline entries with poor follow-through.
+
+  v12     regime_overrides.ranging.buy_signal: 0.31 → 0.34
+          Triggered by 3 sessions of A/B/G combined ranging win rate at 27.8%,
+          well below the 42% floor. Ranging markets are structurally
+          unfavourable for directional entries; the threshold was raised to
+          require much stronger conviction before entering.
+
+  v13     strategy.deadweight_rounds_min: 5 → 7
+          Triggered by MEGA's own deadweight exit rate of 66.7% over 3 sessions,
+          well above the 40% threshold. Positions were being flagged as stale
+          before they had time to develop. Raising to 7 rounds (105 minutes at
+          15m intervals) gives entries more room to move before capital is freed.
+
+
+═══════════════════════════════════════════════════════════════════════════════
+CURRENT CONFIG SNAPSHOT (v13)
+═══════════════════════════════════════════════════════════════════════════════
+
+  Base thresholds:
+    buy_signal:            0.15   (entry gate, base)
+    sell_signal:          -0.12   (exit gate)
+    cvd_buy_min:           0.02   (flow confirmation for entry)
+    cvd_sell_max:         -0.25   (flow-based exit trigger)
+    funding_buy_max:       0.55   (positioning filter for entry)
+    sell_loss_pct:         6%     (hard stop-loss)
+    sell_profit_pct:      12%     (take-profit target)
+    cash_min_pct:         25%     (minimum cash reserve)
+    max_positions:         3      (maximum concurrent open positions)
+    buy_size_pct:         20%     (flat fallback size before Kelly kicks in)
+    deadweight_rounds_min: 7      (minimum rounds before deadweight check)
+
+  Regime overrides (applied on top of base):
+    trending_up:    buy_signal → 0.21
+    trending_down:  buy_signal → 0.25, sell_loss_pct → 4%
+    volatile:       buy_signal → 0.30, cash_min_pct → 40%
+    ranging:        buy_signal → 0.34, buy_size_pct → 12%
+
+  Signal weights (sum to 1.0):
+    cvd_norm:          0.25
+    funding_signal:    0.22
+    momentum_1h:       0.18
+    rsi_norm:          0.12
+    volume_zscore:     0.10
+    fear_greed_signal: 0.08
+    momentum_4h:       0.05

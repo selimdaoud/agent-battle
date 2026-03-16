@@ -1,9 +1,9 @@
 {
   "meta": {
-    "version": 31,
+    "version": 28,
     "createdAt": "2026-03-11T00:00:00Z",
-    "note": "Updated after session 38 — regime_overrides.trending_up.buy_signal: 0.3 → 0.33",
-    "lastUpdated": "2026-03-15T15:43:36.277Z"
+    "note": "Updated after session 27 — regime_overrides.trending_up.buy_signal: 0.24 → 0.27",
+    "lastUpdated": "2026-03-14T22:02:12.453Z"
   },
   "archetype": {
     "label": "Adaptive Synthesizer",
@@ -26,8 +26,7 @@
   "regime_overrides": {
     "ranging": {
       "buy_signal": 0.52,
-      "buy_size_pct": 0.12,
-      "sell_loss_pct": 5
+      "buy_size_pct": 0.12
     },
     "volatile": {
       "buy_signal": 0.3,
@@ -38,7 +37,7 @@
       "sell_loss_pct": 4
     },
     "trending_up": {
-      "buy_signal": 0.33,
+      "buy_signal": 0.27,
       "sell_loss_pct": 4
     }
   },
@@ -52,11 +51,11 @@
     "momentum_4h": 0.0513
   },
   "threat_playbook": [
+    "[v23] After 21 sessions: regime_overrides.ranging.buy_signal adjusted 0.49 → 0.52. Basis: 3 sessions — A/B/G combined ranging avg win rate: 27.8%.",
+    "[v24] After 22 sessions: regime_overrides.trending_up.sell_loss_pct adjusted 6 → 5. Basis: 3 sessions — A/B/G combined trending_up stop_loss exit rate: 0.0% (low).",
+    "[v25] After 23 sessions: regime_overrides.trending_up.sell_loss_pct adjusted 5 → 4. Basis: 3 sessions — A/B/G combined trending_up stop_loss exit rate: 0.0% (low).",
     "[v26] After 24 sessions: signal_weights.cvd_norm adjusted 0.25 → 0.225. Basis: 5 sessions — cvd_norm avg accuracy: 16.7% (below 50%).",
     "[v27] After 25 sessions: regime_overrides.trending_up.buy_signal adjusted 0.21 → 0.24. Basis: 3 sessions — A/B/G combined trending_up avg win rate: 33.3%.",
-    "[v28] After 27 sessions: regime_overrides.trending_up.buy_signal adjusted 0.24 → 0.27. Basis: 3 sessions — A/B/G combined trending_up avg win rate: 33.3%.",
-    "[v29] After 29 sessions: regime_overrides.ranging.sell_loss_pct adjusted 6 → 5. Basis: 3 sessions — A/B/G combined ranging stop_loss exit rate: 0.0% (low).",
-    "[v30] After 33 sessions: regime_overrides.trending_up.buy_signal adjusted 0.27 → 0.3. Basis: 3 sessions — A/B/G combined trending_up avg win rate: 40.7%.",
-    "[v31] After 38 sessions: regime_overrides.trending_up.buy_signal adjusted 0.3 → 0.33. Basis: 3 sessions — A/B/G combined trending_up avg win rate: 29.6%."
+    "[v28] After 27 sessions: regime_overrides.trending_up.buy_signal adjusted 0.24 → 0.27. Basis: 3 sessions — A/B/G combined trending_up avg win rate: 33.3%."
   ]
 }

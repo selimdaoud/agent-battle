@@ -1,6 +1,6 @@
 'use strict'
 
-const VERSION = '1.0.4'
+const VERSION = '1.0.5'
 
 require('dotenv').config()
 const fs       = require('fs')
@@ -217,7 +217,8 @@ function _defaultAgent(name) {
     threatened:           false,
     survivalScore:        0,
     portfolioHistory:     [startCapital],
-    totalFees:            0
+    totalFees:            0,
+    closedTrades:         []   // { pair, return_pct } for last 100 closed round-trips
   }
 }
 
@@ -370,6 +371,20 @@ class World {
       if (Object.keys(roundValues).length > 0) {
         agent.portfolioHistory = [C.INITIAL_CAPITAL, ...Object.keys(roundValues).sort((a,b)=>a-b).map(r => roundValues[r])]
       }
+
+      // Rebuild closedTrades from TRADE ticks (last 100 BUY→SELL round-trips)
+      const buyCosts = {}
+      for (const row of tradeTicks) {
+        const t = JSON.parse(row.payload)
+        if (t.action === 'BUY' && t.proceeds_or_cost != null) {
+          buyCosts[t.pair] = t.proceeds_or_cost
+        } else if (t.action === 'SELL' && buyCosts[t.pair] != null && t.proceeds_or_cost != null) {
+          const returnPct = (t.proceeds_or_cost - buyCosts[t.pair]) / buyCosts[t.pair] * 100
+          agent.closedTrades.push({ pair: t.pair, return_pct: returnPct })
+          delete buyCosts[t.pair]
+        }
+      }
+      if (agent.closedTrades.length > 100) agent.closedTrades = agent.closedTrades.slice(-100)
 
       // Restore MEGA state from config if no trade ticks found (survives DB reset)
       if (name === 'MEGA' && tradeTicks.length === 0) {
@@ -673,6 +688,14 @@ class World {
         agent.totalFees = (agent.totalFees || 0) + fee
         agent.holdings[decision.pair] = (agent.holdings[decision.pair] || 0) - qty
         if (agent.holdings[decision.pair] <= 1e-10) {
+          // Capture closed-trade return before entry price is erased
+          const entryAskPrice = agent.entryPrices[decision.pair]
+          if (entryAskPrice) {
+            const entryCost  = qty * entryAskPrice * (1 + C.TAKER_FEE_PCT)
+            const returnPct  = entryCost > 0 ? (proceeds - entryCost) / entryCost * 100 : 0
+            agent.closedTrades.push({ pair: decision.pair, return_pct: returnPct })
+            if (agent.closedTrades.length > 100) agent.closedTrades.shift()
+          }
           delete agent.holdings[decision.pair]
           delete agent.entryPrices[decision.pair]
           delete agent.entryRounds[decision.pair]

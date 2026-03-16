@@ -1,6 +1,6 @@
 'use strict'
 
-const VERSION = '1.0.3'
+const VERSION = '1.0.4'
 
 require('dotenv').config()
 const blessed    = require('blessed')
@@ -58,7 +58,7 @@ const proposalBox = blessed.box({
   left:    'center',
   width:   '72%',
   height:  '65%',
-  label:   ' ★ MEGA CONFIG PROPOSAL ',
+  label:   ' ★ MEGA CONFIG — AUTO-APPLIED ',
   border:  { type: 'line' },
   style:   { border: { fg: 'yellow' }, label: { fg: 'yellow', bold: true }, bg: 'black' },
   tags:    true,
@@ -89,14 +89,15 @@ function showProposal(data) {
     : ''
 
   proposalBox.setContent(
+    `{green-fg}{bold}✓ AUTO-APPLIED{/bold}{/green-fg}\n\n` +
     `{yellow-fg}{bold}Field:{/bold}{/yellow-fg}    ${p.field}\n` +
-    `{yellow-fg}{bold}Current:{/bold}{/yellow-fg}  {red-fg}${p.current}{/red-fg}   {yellow-fg}{bold}Proposed:{/bold}{/yellow-fg}  {green-fg}${p.proposed}{/green-fg}\n` +
+    `{yellow-fg}{bold}Before:{/bold}{/yellow-fg}   {red-fg}${p.current}{/red-fg}   {yellow-fg}{bold}After:{/bold}{/yellow-fg}  {green-fg}${p.proposed}{/green-fg}\n` +
     `{yellow-fg}{bold}Basis:{/bold}{/yellow-fg}    ${p.confidence}\n` +
     `\n` +
     `{white-fg}${wrap(p.justification)}{/white-fg}` +
     deferred +
     `\n\n${'─'.repeat(60)}\n` +
-    `  {green-fg}{bold}[Y]{/bold}{/green-fg} Apply change    {red-fg}{bold}[N]{/bold}{/red-fg} Reject`
+    `  {grey-fg}Press any key to close{/grey-fg}`
   )
   proposalBox.show()
   proposalBox.setFront()
@@ -241,7 +242,8 @@ function buildHandlers() {
       screen.render()
     },
     onProposal(data) {
-      log.append('{yellow-fg}★ MEGA config proposal ready — review overlay{/yellow-fg}', 'TICK')
+      const p = data.proposal
+      if (p) log.append(`{green-fg}★ MEGA config auto-applied: ${p.field} ${p.current} → ${p.proposed}{/green-fg}`, 'TICK')
       showProposal(data)
     },
     onLogHistory(data) {
@@ -273,6 +275,7 @@ screen.on('keypress', (ch, key) => {
   if (key.name === 'escape') {
     if (aiChat.isOpen())        { aiChat.handleEsc(); return }
     if (!shutdownBox.hidden)    { closeShutdown();    return }
+    if (!proposalBox.hidden)    { proposalBox.hide(); screen.render(); return }
     screen.destroy(); process.exit(0)
   }
 
@@ -282,17 +285,10 @@ screen.on('keypress', (ch, key) => {
   // AI chat modal intercepts all other keys when open
   if (aiChat.isOpen()) return
 
-  // Proposal overlay intercepts Y/N when visible
+  // Proposal overlay: any key closes it (informational only — change already applied)
   if (!proposalBox.hidden) {
-    if (ch === 'y' || ch === 'Y') {
-      clientRef.current?.send({ type: 'COMMAND', command: 'apply_change', params: { approved: true } })
-      proposalBox.hide()
-      screen.render()
-    } else if (ch === 'n' || ch === 'N') {
-      clientRef.current?.send({ type: 'COMMAND', command: 'apply_change', params: { approved: false } })
-      proposalBox.hide()
-      screen.render()
-    }
+    proposalBox.hide()
+    screen.render()
     return
   }
 

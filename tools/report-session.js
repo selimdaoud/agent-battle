@@ -73,15 +73,17 @@ function agentMetrics(agentName) {
     if (t.realizedPnlPct > 0) byRegime[r].wins++
   }
   const regimeStats = Object.entries(byRegime).map(([regime, d]) => {
-    const n            = d.trades.length
-    const stopLossCount = d.trades.filter(t => t.exitReason === 'stop_loss').length
+    const n                = d.trades.length
+    const stopLossCount    = d.trades.filter(t => t.exitReason === 'stop_loss').length
+    const deadweightCount  = d.trades.filter(t => t.exitReason === 'deadweight').length
     return {
       regime,
-      count:          n,
-      winRate:        parseFloat(((d.wins / n) * 100).toFixed(1)),
-      avgPnl:         parseFloat((d.trades.reduce((s, t) => s + t.realizedPnlPct, 0) / n).toFixed(3)),
-      stopLossRate:   parseFloat(((stopLossCount / n) * 100).toFixed(1)),
-      avgHoldRounds:  parseFloat((d.trades.reduce((s, t) => s + t.roundsHeld, 0) / n).toFixed(1))
+      count:           n,
+      winRate:         parseFloat(((d.wins / n) * 100).toFixed(1)),
+      avgPnl:          parseFloat((d.trades.reduce((s, t) => s + t.realizedPnlPct, 0) / n).toFixed(3)),
+      stopLossRate:    parseFloat(((stopLossCount / n) * 100).toFixed(1)),
+      deadweightRate:  parseFloat(((deadweightCount / n) * 100).toFixed(1)),
+      avgHoldRounds:   parseFloat((d.trades.reduce((s, t) => s + t.roundsHeld, 0) / n).toFixed(1))
     }
   })
 
