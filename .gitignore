@@ -5,6 +5,7 @@
 data/sim.db
 data/ohlcv/
 sessions/
+agents/mega-config.backup*
 
 # Dependencies
 node_modules/

@@ -155,6 +155,67 @@ function buildClosedTrades() {
   return closedTrades
 }
 
+// ── Build closed short records (GAMMA only) ───────────────────────────────────
+function buildClosedShorts() {
+  const openShorts  = {}  // pair → { entryRound, entryPrice, qty, ... }
+  const closedShorts = []
+
+  for (const t of allTicks) {
+    if (t.type !== 'TRADE' || t.agent !== 'GAMMA') continue
+    const { round, payload: trade } = t
+    const { action, pair, price, qty } = trade
+
+    if (action === 'SHORT') {
+      const sig = signalAt(round, pair)
+      openShorts[pair] = {
+        entryRound:    round,
+        entryPrice:    price,
+        qty,
+        signalAtEntry: sig?.signal_score  ?? null,
+        regimeAtEntry: sig?.regime         ?? null,
+        cvdAtEntry:    sig?.cvd_norm       ?? null,
+      }
+    } else if (action === 'COVER') {
+      const open = openShorts[pair]
+      if (!open) continue
+
+      // P&L: (entryPrice - exitPrice) / entryPrice  (positive = gain for short)
+      const pnlPct = open.entryPrice > 0
+        ? ((open.entryPrice - price) / open.entryPrice) * 100
+        : null
+
+      const decKey = `GAMMA:${round}:${pair}`
+      const dec    = decisionIndex[decKey]
+      let exitReason = 'thesis_done'
+      if (trade.enforced_reason === 'short_stop_loss' || dec?.enforced_reason === 'short_stop_loss') {
+        exitReason = 'stop_loss'
+      } else if (pnlPct != null && pnlPct > 0) {
+        exitReason = 'take_profit'
+      }
+
+      closedShorts.push({
+        agent:         'GAMMA',
+        pair,
+        entryRound:    open.entryRound,
+        exitRound:     round,
+        roundsHeld:    round - open.entryRound,
+        entryPrice:    open.entryPrice,
+        exitPrice:     price,
+        qty:           open.qty,
+        realizedPnlPct: pnlPct !== null ? parseFloat(pnlPct.toFixed(4)) : null,
+        signalAtEntry: open.signalAtEntry,
+        regimeAtEntry: open.regimeAtEntry,
+        cvdAtEntry:    open.cvdAtEntry,
+        exitReason
+      })
+
+      delete openShorts[pair]
+    }
+  }
+
+  return closedShorts
+}
+
 // ── Build survival events ─────────────────────────────────────────────────────
 function buildSurvivalEvents() {
   return allTicks
@@ -203,6 +264,7 @@ function buildAgentSummary() {
 
 // ── Assemble and write ────────────────────────────────────────────────────────
 const closedTrades    = buildClosedTrades()
+const closedShorts    = buildClosedShorts()
 const survivalEvents  = buildSurvivalEvents()
 const decisions       = buildDecisions()
 const agentSummary    = buildAgentSummary()
@@ -230,6 +292,7 @@ const session = {
   },
   agentSummary,
   closedTrades,
+  closedShorts,
   survivalEvents,
   decisions
 }
@@ -241,6 +304,7 @@ const meta = {
   totalRounds,
   durationHours: session.meta.durationHours,
   closedTradeCount: closedTrades.length,
+  closedShortCount: closedShorts.length,
   agents: Object.fromEntries(
     Object.entries(agentSummary).map(([name, s]) => [name, {
       trades: s.totalTrades,
@@ -256,7 +320,7 @@ fs.writeFileSync(sessionFile, JSON.stringify(session, null, 2))
 fs.writeFileSync(metaFile,    JSON.stringify(meta,    null, 2))
 
 console.log(`✓ Session exported: ${sessionFile}`)
-console.log(`  ${closedTrades.length} closed trades across ${totalRounds} rounds (${session.meta.durationHours}h)`)
+console.log(`  ${closedTrades.length} closed trades, ${closedShorts.length} closed shorts across ${totalRounds} rounds (${session.meta.durationHours}h)`)
 console.log(`  Meta: ${metaFile}`)
 
 module.exports = { sessionId, sessionFile }

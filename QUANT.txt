@@ -1,5 +1,5 @@
 MEGA STRATEGY — Quantitative Design Review
-Version 13 | Date: 2026-03-14
+Version 14 | Date: 2026-03-19
 Reviewer: Internal
 ═══════════════════════════════════════════════════════════════════════════════
 
@@ -121,6 +121,34 @@ of how well it is implemented.
 
   ───────────────────────────────────────────────────────────────────────────
 
+  A8 — GAMMA SIM SHORT P&L GENERALISES TO MEGA FUTURES SHORTS
+  ─────────────────────────────────────────────────────────────
+  Assumption: Short trades simulated by GAMMA against spot price data
+  (using bid-ask spread + 0.10% taker fee as cost model) are a valid
+  predictor of what MEGA would achieve executing equivalent positions
+  on Binance Futures (fapi.binance.com).
+
+  Risk: Several differences between GAMMA's sim and real Futures execution
+  may invalidate the generalisation:
+    (a) Funding cost: Futures shorts pay/receive funding every 8h. In a
+        bearish market, funding is often negative (shorts receive it), which
+        improves returns. GAMMA's sim does not model funding carry on open
+        short positions.
+    (b) Liquidation mechanics: Real Futures has liquidation risk at the
+        margin limit. GAMMA's hardcoded 8% stop does not replicate this.
+    (c) Basis risk: Futures price ≠ spot price. GAMMA shorts against spot
+        mid; futures entry price can deviate meaningfully at high funding
+        regimes or near expiry.
+    (d) Leverage: GAMMA shorts are 1x (notional = collateral). Real Futures
+        at 1x are equivalent, but the temptation to use leverage will distort
+        the analogy if MEGA ever runs at > 1x.
+
+  Current mitigation: Rule 11 (not yet active) requires ≥15 closed short
+  trades and 3 consecutive positive sessions before proposing MEGA activation.
+  The accumulated evidence reduces (but does not eliminate) the basis risk.
+
+  ───────────────────────────────────────────────────────────────────────────
+
   A7 — THREAT MODE IMPROVES EXPECTED OUTCOMES UNDER THREAT
   ──────────────────────────────────────────────────────────
   Assumption: When MEGA is threatened, relaxing entry and exit thresholds
@@ -237,8 +265,8 @@ from normal underperformance.
   of real trading. In a fast-moving market shift (e.g. sudden shift from
   trending to volatile across all pairs), the strategy may sustain 3 sessions
   of losses before any threshold adjustment is proposed — and then a further
-  session before the change is live (because proposals are approved by the
-  operator, not automatically applied).
+  session before the change is live (proposals are now auto-applied at the
+  end of the pipeline run, so there is no additional approval delay).
 
   Observable signature: A visible degradation in win rate beginning at
   session N, with the corrective proposal not appearing until session N+3,
@@ -268,6 +296,35 @@ from normal underperformance.
   Note: Rules 8, 8b, 9, and 9b each target a different parameter or
   direction — they do not compete with each other for the same field in the
   same session, which reduces bottleneck pressure for those specific rules.
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  F8 — GAMMA SHORT POOL DEPLETION (DATA BLACKOUT)
+  ─────────────────────────────────────────────────
+  Mechanism: GAMMA's short pool is $2,000. With a position size of 50%
+  per trade ($1,000 max) and a stop-loss at 8%, the worst case per stop
+  is −$80. After 25 consecutive maximum-size stop-losses, the pool is
+  exhausted. Once exhausted, GAMMA can no longer open short positions —
+  the pipeline loses its short data source entirely.
+
+  The pool does not auto-replenish. It is restored only on GAMMA respawn
+  (triggered by the long-side bankruptcy rule). A depleted pool can persist
+  for many sessions, during which Rule 11 (propose shorts to MEGA) cannot
+  fire even if conditions are favourable.
+
+  Observable signature: GAMMA box in TUI shows `pool: $0/$2,000`.
+  Short entry log entries cease. closedShorts[] accumulates no new data.
+
+  Distinguishing factor: Not visible in MEGA's own performance — MEGA
+  continues trading longs normally. The failure is in the data pipeline,
+  not in live P&L, making it easy to miss.
+
+  Severity: MEDIUM. Does not cause direct financial loss, but silences
+  the short-opportunity signal at exactly the moments when bearish data
+  would be most valuable (sustained trending_down markets).
+
+  Mitigation: Consider adding a pool reset trigger: if GAMMA respawns
+  for any reason, also reset shortCapital to the initial $2,000.
 
   ───────────────────────────────────────────────────────────────────────────
 
@@ -354,6 +411,41 @@ meaningful shifts in expected P&L.
   Sensitivity: MEDIUM. The impact is directional bias rather than variance.
   The correct weight depends on whether the funding-as-crowding thesis holds
   empirically across observed sessions.
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  short_signal (GAMMA, current: −0.25)
+  ──────────────────────────────────────
+  This threshold determines how bearish the composite signal must be before
+  GAMMA considers a short entry. It mirrors buy_signal for longs.
+
+  Lower bound (more negative, e.g. −0.40): Very few shorts triggered. Data
+  accumulation is slow. Only the most extreme bearish signals qualify, which
+  may under-represent moderate bearish regimes.
+
+  Upper bound (less negative, e.g. −0.15): Too many shorts in ranging and
+  mild trending_down regimes where the edge is unclear. Increases pool
+  depletion risk without proportional improvement in data quality.
+
+  Sensitivity: MEDIUM. The threshold directly controls short trade frequency
+  and thus how fast Rule 11 evidence accumulates. It is adjustable via
+  Rules 10/10b once sufficient data exists.
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  short_stop_pct / short_profit_pct (GAMMA, both currently: 8%)
+  ───────────────────────────────────────────────────────────────
+  Symmetric 8% thresholds create a 1:1 payoff ratio before edge. With a
+  win rate above 50%, expectancy is positive. The equality is intentional:
+  there is no a priori reason to expect shorts to have an asymmetric payoff
+  profile at this stage. These will be revised once empirical data exists.
+
+  The 8% stop is hardcoded (not proposable) to prevent the pipeline from
+  widening it beyond a safe bound before the short mechanics are validated.
+
+  Sensitivity: HIGH for P&L, LOW for pool survival. Tightening to 5% reduces
+  pool depletion risk but increases stop-out frequency. Loosening to 12%
+  amplifies individual losses without necessarily improving the win rate.
 
   ───────────────────────────────────────────────────────────────────────────
 
@@ -645,6 +737,33 @@ implementation cost.
 
   ───────────────────────────────────────────────────────────────────────────
 
+  E8 — GAMMA SHORT REGIME PROFITABILITY BASELINE (HIGH PRIORITY)
+  ───────────────────────────────────────────────────────────────
+  Hypothesis: GAMMA's short positions will show a materially different
+  win rate across regimes. trending_down should produce the highest short
+  win rate; trending_up should produce the lowest (or never trigger, given
+  the regime gate). This baseline is prerequisite data for Rule 11.
+
+  Method: After 5–10 sessions of GAMMA short activity, aggregate
+  closedShorts[] by regime at entry. Compute per-regime:
+    - short win rate (return_pct > 0)
+    - average return_pct
+    - max drawdown of the short pool (as a parallel metric to the long MaxDD)
+
+  Pass criterion:
+    trending_down short win rate > 55% with avg return > +0.3%
+    → sufficient evidence to propose Rule 11 evaluation
+
+  Fail indicator:
+    trending_down short win rate < 45% OR avg return < 0
+    → either the regime gate needs tightening or the signal thresholds
+    are not capturing genuine bearish setups. Revisit short_signal and
+    short_cvd_max before activating MEGA short proposals.
+
+  Data requirement: ≥ 15 closed short trades in trending_down regime.
+
+  ───────────────────────────────────────────────────────────────────────────
+
   E7 — MULTI-PROPOSAL PER SESSION (LOW PRIORITY)
   ────────────────────────────────────────────────
   Hypothesis: The single-proposal-per-session constraint causes excessive
@@ -652,14 +771,14 @@ implementation cost.
   (F6). Allowing up to 2 proposals per session when more than one rule
   fires, ordered by severity, would shorten the recovery window.
 
-  Design consideration: The operator approval requirement provides a natural
-  review gate. Showing 2 proposals simultaneously (ordered by priority score)
-  does not increase systemic risk if the operator reviews both. The
-  suppression logic (3 sessions after rejection) should apply independently
+  Design consideration: With auto-apply, there is no operator review gate.
+  Showing 2 proposals simultaneously (ordered by priority score) does not
+  increase systemic risk; both would be auto-applied in sequence. The
+  suppression logic (3 sessions after a change) should apply independently
   per rule, not globally.
 
-  Implementation cost: LOW — change is in detect-changes.js and the TUI
-  proposal overlay only.
+  Implementation cost: LOW — change is in detect-changes.js only (TUI
+  overlay is already informational).
 
 
 ═══════════════════════════════════════════════════════════════════════════════
@@ -697,6 +816,15 @@ They are recorded here to prevent them from being treated as resolved.
       take-profit trigger never fires. Should take-profit targets also carry
       regime overrides?
 
+  Q6: At what point does GAMMA's short data become a liability instead
+      of a benefit? If GAMMA consistently loses on shorts (pool depletes
+      repeatedly), the pipeline will never trigger Rule 11 — but the losses
+      on the short pool do reduce GAMMA's total capital slightly via fees,
+      which over many sessions may marginally affect its survival position
+      relative to ALPHA and BETA. The threshold at which short activity
+      should be disabled (short win rate persistently < 35% over 5+ sessions)
+      is not currently defined. This needs a floor rule analogous to Rule 10.
+
   Q5: Rules 1/2 (raise buy_signal) vs. 6/7 (lower buy_signal) remain
       asymmetric: the raise conditions (win rate < 42%, avg PnL < −0.15%)
       are easier to trigger than the lower conditions (win rate > 70%, avg
@@ -724,11 +852,19 @@ SECTION 7 — SUMMARY RISK SCORECARD
   Self-evolution pipeline         GOOD              GOOD
   Threat mode                     WEAK              NOT VALIDATED
   Peer proxy assumption           ADEQUATE          NOT VALIDATED
+  GAMMA short book                ADEQUATE          NOT STARTED (new in v14)
+  Short → MEGA proposal pipeline  DESIGNED          PENDING DATA (Rule 11 gated)
 
   Overall: The mechanical structure of the strategy is sound. The primary
   gaps are in empirical validation of signal weights, the threat mode
   logic, and the regime classifier at transition points. These are also
   the three areas with the highest potential impact on outcomes. They should
   be addressed in approximately the priority order described in Section 5.
+
+  The GAMMA short book (v14) adds a data collection layer for future MEGA
+  short activation. It is architecturally isolated (separate capital pool,
+  no survival score impact) and gated behind Rule 11 evidence requirements,
+  limiting the risk to GAMMA's $2,000 pool only. Empirical validation
+  (E8) should begin as soon as 15 closed short trades are available.
 
 ═══════════════════════════════════════════════════════════════════════════════

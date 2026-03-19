@@ -1,5 +1,5 @@
 MEGA STRATEGY — Human-Readable Reference
-Version 12 | Last updated: 2026-03-14
+Version 14 | Last updated: 2026-03-19
 ═══════════════════════════════════════════════════════════════════════════════
 
 
@@ -315,14 +315,129 @@ automatically:
   (driven by MEGA's capital size and the pairs it holds), not a market-wide
   regime condition.
 
-  A proposed change is shown in the TUI as an overlay with the full
-  justification. The operator approves or rejects it. Rejected proposals are
-  suppressed for 3 sessions before being re-evaluated. A backup of
-  mega-config.json with a timestamp is saved before every approved change.
+  A proposed change is automatically applied at the end of the pipeline run.
+  The TUI displays an informational overlay with the full justification and
+  the before/after values; the operator dismisses it at their convenience
+  — no approval step required. A backup of mega-config.json with an ISO
+  timestamp is saved before every applied change. Rejected proposals (not
+  applicable in auto-apply mode) would be suppressed for 3 sessions before
+  re-evaluation; suppression logic remains in place for future use.
 
 
 ═══════════════════════════════════════════════════════════════════════════════
-PART 7 — EVOLUTION HISTORY (summary)
+PART 7 — GAMMA MARKET-NEUTRAL EXTENSION
+═══════════════════════════════════════════════════════════════════════════════
+
+GAMMA has been extended from a pure long-only Risk Manager into a market-
+neutral sim agent. It now maintains a separate short capital pool alongside
+its existing long book. This change does not affect ALPHA or BETA.
+
+Purpose
+───────
+GAMMA is not modified to earn P&L on short trades. Its purpose remains
+data generation for the self-evolution pipeline. By running both long and
+short positions simultaneously, GAMMA produces regime-specific short
+profitability data that the pipeline can use to propose short activation
+on MEGA once statistical confidence is established.
+
+The question GAMMA is answering: "In which regimes, with which signals,
+would a short position have been profitable over the observed sessions?"
+
+Architecture (Option A2 — separate capital pool)
+─────────────────────────────────────────────────
+GAMMA maintains two distinct capital pools:
+
+  Long pool:   $10,000  — existing capital, unchanged behaviour
+  Short pool:  $2,000   — 20% of initial capital, dedicated to shorts
+
+The two pools are completely isolated:
+  - A loss on a short does not affect the long pool, and vice versa
+  - GAMMA's survival score is computed from the long pool only
+  - portfolioHistory (used for Sharpe/MaxDD metrics) tracks long capital only
+  - The short pool is displayed separately in the TUI (GAMMA box only)
+
+Short entry conditions (gammaDecide)
+─────────────────────────────────────
+All three gates must pass simultaneously:
+
+  Gate 1 — Bearish signal:   signal_score  < −0.25
+  Gate 2 — Selling flow:     cvd_norm      < −0.10  (sellers aggressively hitting bids)
+  Gate 3 — Allowed regime:   regime ∈ {trending_down, volatile}
+
+Additional constraints:
+  - Maximum 1 short position open at any time
+  - GAMMA will not short a pair it is currently long
+  - Minimum $50 available in short pool required to open a position
+  - Position size = 50% of available short pool (max $1,000)
+
+Cover (exit) conditions — evaluated before long sell logic each tick
+─────────────────────────────────────────────────────────────────────
+  Priority 1 — Stop-loss:    unrealised short loss > 8%   (price rose 8% from entry)
+  Priority 2 — Take-profit:  unrealised short gain > 8%   (price fell 8% from entry)
+  Priority 3 — Thesis done:  signal_score > 0.00           (no longer bearish)
+
+Stop-loss also fires intra-candle (same scan as long stop-losses) so a
+fast upward move does not require waiting a full tick.
+
+Short P&L mechanics
+────────────────────
+  Entry:  sell at BID (mid − half-spread)  — GAMMA "borrows" the asset notionally
+  Cover:  buy back at ASK (mid + half-spread)
+  P&L:    qty × (entryBidPrice − exitAskPrice) − coverFee
+  Return: P&L / collateral × 100%
+
+Entry and cover fees are standard Binance taker fee (0.10%), charged against
+the short pool. The long pool capital_after and portfolioHistory are never
+modified by short trades.
+
+TUI display (GAMMA box only)
+─────────────────────────────
+A "Shorts" section appears between Holdings and the trading metrics:
+
+  Shorts  pool:$1,400/$2,000
+    ▼ BTC/USDT   $1,000  +3.2%  2r
+    ▼ SOL/USDT   $0      (no open shorts)
+
+  ▼ = short position marker (always red)
+  P&L is shown green (price fell = profit) or red (price rose = loss)
+  pool shows remaining short capital / pool maximum
+  pool turns yellow at > 80% used, red when exhausted
+
+Log display
+────────────
+SHORT entries appear in red (same colour as SELL). COVER entries show
+the realised P&L and remaining pool balance:
+
+  14:32:05 GAMMA SHORT BTC/USDT  $1,000 @ $84,200  fee $0.010  pool $1,000
+    ↳ GAMMA short [trending_down] BTC: score=−0.38, cvd=−0.22...
+
+  14:38:41 GAMMA COVER BTC/USDT  $1,068 @ $83,500  fee $0.008  +$68 (+6.8%)
+    ↳ GAMMA cover BTC/USDT: short profit 8% reached (+6.8%).
+
+Future proposal rules (not yet implemented — pending data accumulation)
+────────────────────────────────────────────────────────────────────────
+After GAMMA accumulates sufficient short history (minimum 3 sessions with
+≥5 closed short trades each), the pipeline will add:
+
+  Rule 10:  GAMMA short win rate < 40% for 3 sessions
+            → raise |short_signal| threshold (tighter entry bar)
+
+  Rule 10b: GAMMA short win rate > 65% for 3 sessions
+            → lower |short_signal| threshold (more opportunities)
+
+  Rule 11:  GAMMA short P&L persistently positive in trending_down
+            for 3 sessions (win rate > 55%, avg return > +0.5%)
+            → propose to MEGA: enable short in trending_down regime
+              { field: strategy.allow_short, proposed: true,
+                evidence: { win_rate, avg_return, n_trades } }
+
+These rules are blocked until the evidence base is solid. No short
+activation will be proposed to MEGA based on fewer than 15 closed
+short trades.
+
+
+═══════════════════════════════════════════════════════════════════════════════
+PART 8 — EVOLUTION HISTORY (summary)
 ═══════════════════════════════════════════════════════════════════════════════
 
   v7–v11  regime_overrides.trending_up.buy_signal: 0.18 → 0.21
@@ -344,7 +459,7 @@ PART 7 — EVOLUTION HISTORY (summary)
 
 
 ═══════════════════════════════════════════════════════════════════════════════
-CURRENT CONFIG SNAPSHOT (v13)
+CURRENT CONFIG SNAPSHOT (v14)
 ═══════════════════════════════════════════════════════════════════════════════
 
   Base thresholds:

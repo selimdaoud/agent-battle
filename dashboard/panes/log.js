@@ -1,6 +1,6 @@
 'use strict'
 
-const VERSION = '1.0.1'
+const VERSION = '1.0.2'
 
 const blessed = require('blessed')
 
@@ -57,9 +57,25 @@ function create(parent) {
     if (trade) {
       const enforced = decision && decision.enforced_reason ? ` {yellow-fg}[${decision.enforced_reason}]{/yellow-fg}` : ''
       const feeStr   = trade.fee > 0 ? ` {magenta-fg}fee $${trade.fee.toFixed(3)}{/magenta-fg}` : ''
-      const label = `{grey-fg}${ts}{/grey-fg} {green-fg}${agent} ${trade.action} ${trade.pair}` +
+      const isShort  = trade.action === 'SHORT' || trade.action === 'COVER'
+      const color    = isShort ? 'red' : 'green'
+
+      let pnlStr = ''
+      if (trade.action === 'COVER' && trade.pnl != null) {
+        const sign   = trade.pnl >= 0 ? '+' : ''
+        const pnlPct = trade.proceeds_or_cost > 0
+          ? (trade.pnl / (trade.proceeds_or_cost - trade.pnl) * 100).toFixed(1)
+          : '0.0'
+        const pnlCol = trade.pnl >= 0 ? 'green' : 'red'
+        pnlStr = ` {${pnlCol}-fg}{bold}${sign}$${Math.round(Math.abs(trade.pnl))} (${sign}${pnlPct}%){/bold}{/${pnlCol}-fg}`
+      }
+      const poolStr = isShort && trade.short_capital_after != null
+        ? ` {grey-fg}pool $${Math.round(trade.short_capital_after)}{/grey-fg}`
+        : ''
+
+      const label = `{grey-fg}${ts}{/grey-fg} {${color}-fg}${agent} ${trade.action} ${trade.pair}` +
                     ` $${Math.round(trade.proceeds_or_cost).toLocaleString()}` +
-                    ` @ $${trade.price?.toLocaleString()}{/green-fg}${feeStr}${enforced}`
+                    ` @ $${trade.price?.toLocaleString()}{/${color}-fg}${pnlStr}${poolStr}${feeStr}${enforced}`
       if (decision && decision.reasoning) {
         append(`  {cyan-fg}↳ ${decision.reasoning}{/cyan-fg}`, 'TRADE', agent, true)
       }

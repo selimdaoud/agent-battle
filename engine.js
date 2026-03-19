@@ -65,18 +65,20 @@ async function tick(world, openai, emitter) {
     world.setLivePrices(prices)
     const regime = cachedSigs?.[0]?.regime || 'ranging'
     const stops  = strategy.intraStopLoss(world.getSnapshot(), prices, regime)
-    for (const { name, pair, pct, threshold } of stops) {
+    for (const { name, pair, pct, threshold, isShort } of stops) {
+      const action = isShort ? 'COVER' : 'SELL'
       const d = {
-        action:       'SELL',
+        action,
         pair,
-        amount_usd:   0,
-        reasoning:    `[STOP] ${name} intra-candle stop-loss: ${pct.toFixed(1)}% on ${pair} exceeds -${threshold}%`,
-        signal_score: 0,
-        personality:  world.getSnapshot().agents[name]?.personality || ''
+        amount_usd:      0,
+        enforced_reason: isShort ? 'short_stop_loss' : 'stop_loss',
+        reasoning:       `[STOP] ${name} intra-candle ${isShort ? 'short' : 'long'} stop-loss: ${pct.toFixed(1)}% on ${pair} exceeds -${threshold}%`,
+        signal_score:    0,
+        personality:     world.getSnapshot().agents[name]?.personality || ''
       }
       const result = world.applyDecision(name, d, prices)
       emitter.emit('trade', { ...result, agent: name })
-      log(`[STOP] ${name} ${pair} stopped out at ${pct.toFixed(1)}% (threshold: -${threshold}%)`)
+      log(`[STOP] ${name} ${pair} ${isShort ? 'short' : 'long'} stopped out at ${pct.toFixed(1)}% (threshold: -${threshold}%)`)
     }
   }
 

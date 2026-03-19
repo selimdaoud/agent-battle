@@ -1,6 +1,6 @@
 'use strict'
 
-const VERSION = '1.0.5'
+const VERSION = '1.0.6'
 
 require('dotenv').config()
 const fs       = require('fs')
@@ -65,6 +65,8 @@ const C = {
   BACKTEST_MIN_CAPITAL:      500,   // minimum capital required to allow a BUY in backtester
   BACKTEST_TRAIN_DAYS:       30,    // default training window for walk-forward (days)
   BACKTEST_TEST_DAYS:        7,     // default test window for walk-forward (days)
+
+  GAMMA_SHORT_POOL_PCT:      0.20,  // 20% of initial capital reserved as GAMMA's short pool ($2,000)
 
   CULL_EVERY_N_ROUNDS:       10,
   LAST_PLACE_CULL_THRESHOLD: 3,
@@ -173,6 +175,14 @@ Your survival score rewards low drawdown more than raw returns.`,
       cash_min_pct:    0.30,  // must keep at least 30% in cash at all times
       max_positions:   2,     // hard cap on simultaneous open positions
       buy_size_pct:    0.15,  // fraction of capital per BUY (conservative)
+      // ── Short selling (sim only — separate capital pool, no survival score impact) ──
+      short_signal:     -0.25, // score must be below this to enter a short
+      short_cvd_max:    -0.10, // cvd must confirm selling pressure
+      short_size_pct:    0.50, // fraction of short pool per position (50% = $1,000 max)
+      short_profit_pct:  8,    // take profit on short at this % gain
+      short_stop_pct:    8,    // forced cover at this % loss (hardcoded safety)
+      cover_signal:      0.00, // cover when signal recovers above this
+      short_regimes: ['trending_down', 'volatile'],  // only short in these regimes
       regime_overrides: {
         trending_up:   { buy_signal: 0.14 },                              // slightly looser in a clear uptrend
         trending_down: { buy_signal: 0.25, sell_loss_pct: 3 },           // tighter stops, higher entry bar
@@ -218,7 +228,10 @@ function _defaultAgent(name) {
     survivalScore:        0,
     portfolioHistory:     [startCapital],
     totalFees:            0,
-    closedTrades:         []   // { pair, return_pct } for last 100 closed round-trips
+    closedTrades:         [],  // { pair, return_pct } for last 100 closed long round-trips
+    shortPositions:       {},  // { pair: { qty, entryPrice, entryRound, collateral } }
+    shortCapital:         name === 'GAMMA' ? Math.round(C.INITIAL_CAPITAL * C.GAMMA_SHORT_POOL_PCT) : 0,
+    closedShorts:         []   // { pair, return_pct } for last 100 closed short round-trips
   }
 }
 
@@ -385,6 +398,43 @@ class World {
         }
       }
       if (agent.closedTrades.length > 100) agent.closedTrades = agent.closedTrades.slice(-100)
+
+      // Rebuild shortPositions + shortCapital + closedShorts (GAMMA only)
+      if (name === 'GAMMA') {
+        let shortCap = Math.round(C.INITIAL_CAPITAL * C.GAMMA_SHORT_POOL_PCT)
+        for (const row of tradeTicks) {
+          const t = JSON.parse(row.payload)
+          if (t.action === 'SHORT' && t.proceeds_or_cost != null) {
+            shortCap -= t.proceeds_or_cost
+            agent.shortPositions[t.pair] = {
+              qty:        t.qty,
+              entryPrice: t.price,
+              collateral: t.proceeds_or_cost,
+              entryRound: row.round
+            }
+          } else if (t.action === 'COVER' && t.proceeds_or_cost != null) {
+            shortCap += t.proceeds_or_cost
+            delete agent.shortPositions[t.pair]
+          }
+          // Use authoritative value from tick when available
+          if (t.short_capital_after !== undefined) shortCap = t.short_capital_after
+        }
+        agent.shortCapital = shortCap
+
+        // Rebuild closedShorts
+        const shortEntryCosts = {}
+        for (const row of tradeTicks) {
+          const t = JSON.parse(row.payload)
+          if (t.action === 'SHORT' && t.proceeds_or_cost != null) {
+            shortEntryCosts[t.pair] = t.proceeds_or_cost
+          } else if (t.action === 'COVER' && shortEntryCosts[t.pair] != null && t.proceeds_or_cost != null) {
+            const returnPct = (t.proceeds_or_cost - shortEntryCosts[t.pair]) / shortEntryCosts[t.pair] * 100
+            agent.closedShorts.push({ pair: t.pair, return_pct: returnPct })
+            delete shortEntryCosts[t.pair]
+          }
+        }
+        if (agent.closedShorts.length > 100) agent.closedShorts = agent.closedShorts.slice(-100)
+      }
 
       // Restore MEGA state from config if no trade ticks found (survives DB reset)
       if (name === 'MEGA' && tradeTicks.length === 0) {
@@ -581,6 +631,8 @@ class World {
       holdings:            agent.holdings,
       entryPrices:         agent.entryPrices,
       entryRounds:         agent.entryRounds,
+      shortPositions:      agent.shortPositions || {},
+      shortCapital:        agent.shortCapital   || 0,
       totalValue:          _totalValue(agent, currentPrices),
       survivalScore:       agent.survivalScore,
       respawnCount:        agent.respawnCount,
@@ -709,6 +761,62 @@ class World {
           proceeds_or_cost: proceeds,
           fee,
           capital_after:    agent.capital
+        }
+        if (decision.enforced_reason) trade.enforced_reason = decision.enforced_reason
+      }
+    } else if (decision.action === 'SHORT' && decision.amount_usd > 0 && price) {
+      // SHORT: open a simulated short — deduct collateral from GAMMA's short pool
+      const halfSpread = _pairSpread(decision.pair)
+      const entryPrice = price * (1 - halfSpread)        // sell at bid
+      const qty        = decision.amount_usd / entryPrice
+      const collateral = decision.amount_usd * (1 + C.TAKER_FEE_PCT)
+      const fee        = decision.amount_usd * C.TAKER_FEE_PCT
+
+      agent.shortCapital -= collateral
+      agent.totalFees = (agent.totalFees || 0) + fee
+      agent.shortPositions[decision.pair] = {
+        qty, entryPrice, collateral,
+        entryRound: this._snapshot.round
+      }
+
+      trade = {
+        action:              'SHORT',
+        pair:                decision.pair,
+        qty,
+        price:               entryPrice,
+        proceeds_or_cost:    collateral,
+        fee,
+        short_capital_after: agent.shortCapital
+      }
+
+    } else if (decision.action === 'COVER' && price) {
+      const pos = agent.shortPositions[decision.pair]
+      if (pos) {
+        const halfSpread = _pairSpread(decision.pair)
+        const exitPrice  = price * (1 + halfSpread)      // buy back at ask
+        const { qty, entryPrice, collateral } = pos
+        const fee        = qty * exitPrice * C.TAKER_FEE_PCT
+        const pnl        = qty * (entryPrice - exitPrice) - fee
+        const netReturn  = collateral + pnl
+
+        agent.shortCapital += netReturn
+        agent.totalFees = (agent.totalFees || 0) + fee
+
+        const returnPct = pnl / collateral * 100
+        agent.closedShorts.push({ pair: decision.pair, return_pct: returnPct })
+        if (agent.closedShorts.length > 100) agent.closedShorts.shift()
+
+        delete agent.shortPositions[decision.pair]
+
+        trade = {
+          action:              'COVER',
+          pair:                decision.pair,
+          qty,
+          price:               exitPrice,
+          proceeds_or_cost:    netReturn,
+          fee,
+          pnl,
+          short_capital_after: agent.shortCapital
         }
         if (decision.enforced_reason) trade.enforced_reason = decision.enforced_reason
       }
@@ -872,6 +980,7 @@ class World {
   _scanStopLosses(currentPrices) {
     for (const [name, agent] of Object.entries(this._snapshot.agents)) {
       if (!agent.alive) continue
+      // Long stop-loss
       for (const [pair, qty] of Object.entries(agent.holdings)) {
         if (qty <= 0) continue
         const entry = agent.entryPrices[pair]
@@ -880,6 +989,20 @@ class World {
           this.applyDecision(name,
             { action: 'SELL', pair, amount_usd: 0, enforced_reason: 'stop_loss' },
             currentPrices)
+        }
+      }
+      // Short stop-loss (GAMMA only)
+      if (name === 'GAMMA') {
+        const stopPct = C.STRATEGY.GAMMA.short_stop_pct
+        for (const [pair, pos] of Object.entries(agent.shortPositions || {})) {
+          const now = currentPrices[pair]
+          if (!pos || !now) continue
+          const lossPct = (now - pos.entryPrice) / pos.entryPrice * 100
+          if (lossPct >= stopPct) {
+            this.applyDecision('GAMMA',
+              { action: 'COVER', pair, amount_usd: 0, enforced_reason: 'short_stop_loss' },
+              currentPrices)
+          }
         }
       }
     }

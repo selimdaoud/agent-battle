@@ -1,6 +1,6 @@
 'use strict'
 
-const VERSION = '1.0.3'
+const VERSION = '1.0.4'
 
 const blessed = require('blessed')
 const { C }   = require('../../core/world')
@@ -201,6 +201,10 @@ function create(parent) {
         ? `{red-fg}$${agent.totalFees.toFixed(3)}{/red-fg}`
         : '{grey-fg}$0.000{/grey-fg}'
 
+      const shortSection = name === 'GAMMA'
+        ? `─────────────────────\n${shortLines(agent, prices, snap.round)}\n`
+        : ''
+
       box.setContent(
         `${statusIcon} ${rankStr}\n` +
         `survival: {bold}${agent.survivalScore.toFixed(3)}{/bold}   respawns: ${agent.respawnCount}\n` +
@@ -209,6 +213,7 @@ function create(parent) {
         `Fees paid: ${feesStr}\n` +
         `─────────────────────\n` +
         `Holdings:\n${holdLines || '  (none)'}\n` +
+        shortSection +
         `─────────────────────\n` +
         `${metricsLines(agent)}\n` +
         `─────────────────────\n` +
@@ -375,6 +380,39 @@ function metricsLines(agent) {
   }
 
   return lines.join('\n')
+}
+
+// ── GAMMA short positions ─────────────────────────────────────────────────────
+function shortLines(agent, prices, round) {
+  const positions = agent.shortPositions || {}
+  const pool      = agent.shortCapital   ?? 0
+  const poolMax   = Math.round((agent.portfolioHistory?.[0] ?? 10000) * 0.20)
+  const used      = poolMax - pool
+  const poolColor = used / poolMax > 0.80 ? 'red' : used > 0 ? 'yellow' : 'grey'
+
+  const poolLine = ` {grey-fg}Shorts{/grey-fg}  pool:{${poolColor}-fg}$${fmt(pool)}/$${fmt(poolMax)}{/${poolColor}-fg}`
+
+  const posLines = Object.entries(positions).map(([pair, pos]) => {
+    const now  = prices[pair]
+    const spct = (pos.entryPrice && now)
+      ? (pos.entryPrice - now) / pos.entryPrice * 100
+      : null
+
+    let pnlStr = ''
+    if (spct !== null) {
+      const sign  = spct >= 0 ? '+' : ''
+      const col   = spct >= 0 ? 'green' : 'red'
+      const flag  = spct <= -6 ? ' {bold}↑SL!{/bold}' : spct >= 8 ? ' {bold}↓TP?{/bold}' : ''
+      pnlStr = ` {${col}-fg}${sign}${spct.toFixed(1)}%${flag}{/${col}-fg}`
+    }
+    const colVal  = pos.collateral ? `$${fmt(pos.collateral)}` : '?'
+    const heldStr = (pos.entryRound != null && round != null)
+      ? ` {grey-fg}${round - pos.entryRound}r{/grey-fg}`
+      : ''
+    return `  {red-fg}▼{/red-fg} ${(C.LABELS[pair] || pair).padEnd(10)} ${colVal}${pnlStr}${heldStr}`
+  }).join('\n')
+
+  return poolLine + (posLines ? '\n' + posLines : '\n  {grey-fg}(no open shorts){/grey-fg}')
 }
 
 function fmt(n) {

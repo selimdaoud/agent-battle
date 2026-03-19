@@ -37,7 +37,7 @@ if (!fs.existsSync(sessionFile)) {
 }
 
 const session = JSON.parse(fs.readFileSync(sessionFile, 'utf8'))
-const { meta, closedTrades, survivalEvents, agentSummary } = session
+const { meta, closedTrades, closedShorts = [], survivalEvents, agentSummary } = session
 const agents = ['ALPHA', 'BETA', 'GAMMA', 'MEGA']
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -106,6 +106,54 @@ function agentMetrics(agentName) {
     byExit,
     eliminations: agentSummary[agentName]?.eliminations || 0,
     respawns:     agentSummary[agentName]?.respawns     || 0,
+  }
+}
+
+// ── GAMMA short metrics ───────────────────────────────────────────────────────
+function gammaShortMetrics() {
+  const shorts = closedShorts.filter(t => t.realizedPnlPct != null)
+  if (!shorts.length) return null
+
+  const wins    = shorts.filter(t => t.realizedPnlPct > 0)
+  const losses  = shorts.filter(t => t.realizedPnlPct <= 0)
+  const winRate = (wins.length / shorts.length) * 100
+  const avgWin  = wins.length   > 0 ? wins.reduce((s, t)   => s + t.realizedPnlPct, 0) / wins.length   : 0
+  const avgLoss = losses.length > 0 ? losses.reduce((s, t) => s + t.realizedPnlPct, 0) / losses.length : 0
+  const expectancy = (winRate / 100) * avgWin + (1 - winRate / 100) * avgLoss
+  const avgHold    = shorts.reduce((s, t) => s + t.roundsHeld, 0) / shorts.length
+
+  const byRegime = {}
+  for (const t of shorts) {
+    const r = t.regimeAtEntry || 'unknown'
+    if (!byRegime[r]) byRegime[r] = { trades: [], wins: 0 }
+    byRegime[r].trades.push(t)
+    if (t.realizedPnlPct > 0) byRegime[r].wins++
+  }
+  const regimeStats = Object.entries(byRegime).map(([regime, d]) => {
+    const n             = d.trades.length
+    const stopLossCount = d.trades.filter(t => t.exitReason === 'stop_loss').length
+    return {
+      regime,
+      count:         n,
+      winRate:       parseFloat(((d.wins / n) * 100).toFixed(1)),
+      avgPnl:        parseFloat((d.trades.reduce((s, t) => s + t.realizedPnlPct, 0) / n).toFixed(3)),
+      stopLossRate:  parseFloat(((stopLossCount / n) * 100).toFixed(1)),
+      avgHoldRounds: parseFloat((d.trades.reduce((s, t) => s + t.roundsHeld, 0) / n).toFixed(1))
+    }
+  })
+
+  const byExit = {}
+  for (const t of shorts) { byExit[t.exitReason] = (byExit[t.exitReason] || 0) + 1 }
+
+  return {
+    tradeCount:  shorts.length,
+    winRate:     parseFloat(winRate.toFixed(1)),
+    avgWin:      parseFloat(avgWin.toFixed(3)),
+    avgLoss:     parseFloat(avgLoss.toFixed(3)),
+    expectancy:  parseFloat(expectancy.toFixed(3)),
+    avgHold:     parseFloat(avgHold.toFixed(1)),
+    regimeStats,
+    byExit
   }
 }
 
@@ -178,6 +226,7 @@ function worstTrades(n = 5) {
 // ── Build analysis object ─────────────────────────────────────────────────────
 const metrics = agents.map(agentMetrics).filter(Boolean)
 const sigAccuracy = signalAccuracy()
+const shortMetrics = gammaShortMetrics()
 
 const analysis = {
   sessionId:       meta.sessionId,
@@ -187,7 +236,8 @@ const analysis = {
   signalAccuracy:  sigAccuracy,
   topTrades:       topTrades(5),
   worstTrades:     worstTrades(5),
-  survivalEvents:  survivalEvents.length
+  survivalEvents:  survivalEvents.length,
+  gammaShorts:     shortMetrics
 }
 
 // ── Write analysis JSON ───────────────────────────────────────────────────────
@@ -294,6 +344,41 @@ lines.push(``)
 lines.push(`| Agent / Pair       | Rounds        | Held | PnL      | Regime          | Exit             | CVD context |`)
 lines.push(`|--------------------|---------------|------|----------|-----------------|------------------|-------------|`)
 for (const t of worstTrades(5)) lines.push(tradeRow(t))
+lines.push(``)
+
+// ── GAMMA Short Book ──────────────────────────────────────────────────────────
+lines.push(`## GAMMA Short Book`)
+lines.push(``)
+if (!shortMetrics) {
+  lines.push(`*No closed short positions this session.*`)
+} else {
+  lines.push(`| Metric | Value |`)
+  lines.push(`|--------|-------|`)
+  lines.push(`| Closed shorts | ${shortMetrics.tradeCount} |`)
+  lines.push(`| Win rate | ${shortMetrics.winRate.toFixed(1)}% |`)
+  lines.push(`| Avg win | ${pct(shortMetrics.avgWin)} |`)
+  lines.push(`| Avg loss | ${pct(shortMetrics.avgLoss)} |`)
+  lines.push(`| Expectancy | ${pct(shortMetrics.expectancy)} |`)
+  lines.push(`| Avg hold | ${shortMetrics.avgHold.toFixed(1)}r |`)
+  lines.push(``)
+  if (shortMetrics.regimeStats.length) {
+    lines.push(`**By regime:**`)
+    lines.push(``)
+    lines.push(`| Regime | Count | Win Rate | Avg PnL | Stop Loss% | Avg Hold |`)
+    lines.push(`|--------|-------|----------|---------|------------|----------|`)
+    for (const r of shortMetrics.regimeStats.sort((a, b) => b.count - a.count)) {
+      const flag = r.winRate < 40 ? ' ⚠' : r.winRate > 60 ? ' ✓' : ''
+      lines.push(`| ${r.regime.padEnd(13)} | ${String(r.count).padStart(5)} | ${r.winRate.toFixed(1)}%${flag} | ${pct(r.avgPnl)} | ${r.stopLossRate.toFixed(0)}% | ${r.avgHoldRounds.toFixed(1)}r |`)
+    }
+    lines.push(``)
+  }
+  const e = shortMetrics.byExit
+  lines.push(`Exit reasons: stop_loss=${e.stop_loss || 0}  take_profit=${e.take_profit || 0}  thesis_done=${e.thesis_done || 0}`)
+  if (shortMetrics.tradeCount < 15) {
+    lines.push(``)
+    lines.push(`*Note: fewer than 15 closed shorts — regime Rule 10/11 proposals require ≥15 trades across ≥3 sessions.*`)
+  }
+}
 lines.push(``)
 
 // ── Observations ─────────────────────────────────────────────────────────────

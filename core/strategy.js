@@ -37,6 +37,14 @@ function signalMap(signals) {
   return map
 }
 
+/** Unrealized PnL % for a short position. Positive = profitable (price fell). */
+function unrealizedShortPct(pair, ctx) {
+  const pos = ctx.shortPositions?.[pair]
+  const now = ctx.currentPrices?.[pair]
+  if (!pos || !now) return null
+  return (pos.entryPrice - now) / pos.entryPrice * 100
+}
+
 /** Unrealized PnL % for a holding. Returns null if no entry price. */
 function unrealizedPct(pair, ctx) {
   const entry = ctx.entryPrices[pair]
@@ -274,6 +282,30 @@ function gammaDecide(ctx, smap, threatened) {
   const fearGreed = ctx.signals[0]?.fear_greed ?? 50
   const threatAdj = threatened ? 0.10 : 0
 
+  // ── COVER: check open short positions before anything else ─────────────────
+  for (const [pair, pos] of Object.entries(ctx.shortPositions || {})) {
+    const s    = smap[pair]
+    if (!s || !pos) continue
+    const spct = unrealizedShortPct(pair, ctx)
+
+    const takePft = spct != null && spct >  cfg.short_profit_pct
+    const stopOut = spct != null && spct < -cfg.short_stop_pct   // price rose = loss
+    const thesis  = s.signal_score > cfg.cover_signal            // no longer bearish
+
+    if (stopOut || takePft || thesis) {
+      const why = stopOut  ? `short stop-loss (${spct.toFixed(1)}%) — price rising`
+                : takePft  ? `short profit ${cfg.short_profit_pct}% reached (${spct.toFixed(1)}%)`
+                :             `short thesis complete (score=${s.signal_score.toFixed(2)})`
+      return {
+        action:       'COVER',
+        pair,
+        amount_usd:   0,
+        reasoning:    `GAMMA cover ${C.LABELS[pair] || pair}: ${why}.`,
+        signal_score: s.signal_score
+      }
+    }
+  }
+
   // ── SELL: tight risk exits first ───────────────────────────────────────────
   let exitPair = null
   let exitWhy  = ''
@@ -347,6 +379,36 @@ function gammaDecide(ctx, smap, threatened) {
       amount_usd:   amount,
       reasoning:    `GAMMA [${regime}] high-quality entry in ${C.LABELS[s.pair] || s.pair}: score=${s.signal_score.toFixed(2)} (thr=${cfg.buy_signal.toFixed(2)}), cvd=${s.cvd_norm.toFixed(2)}, fund=${s.funding_signal.toFixed(2)}, F&G=${fearGreed}.`,
       signal_score: s.signal_score
+    }
+  }
+
+  // ── SHORT: enter if strongly bearish signal in allowed regime ─────────────
+  const shortRegimes   = cfg.short_regimes || []
+  const shortPositions = ctx.shortPositions || {}
+  const shortCapital   = ctx.shortCapital   || 0
+
+  if (shortRegimes.includes(regime) && Object.keys(shortPositions).length < 1 && shortCapital > 50) {
+    const bearish = ctx.signals
+      .filter(s =>
+        s.signal_score  < cfg.short_signal &&
+        s.cvd_norm      < cfg.short_cvd_max &&
+        !shortPositions[s.pair] &&
+        !ctx.holdings[s.pair]   // never short a pair we are long
+      )
+      .sort((a, b) => a.signal_score - b.signal_score)  // most bearish first
+
+    if (bearish.length > 0) {
+      const s      = bearish[0]
+      const amount = Math.min(shortCapital * cfg.short_size_pct, shortCapital)
+      if (amount >= 50) {
+        return {
+          action:       'SHORT',
+          pair:         s.pair,
+          amount_usd:   amount,
+          reasoning:    `GAMMA short [${regime}] ${C.LABELS[s.pair] || s.pair}: score=${s.signal_score.toFixed(2)} (thr=${cfg.short_signal}), cvd=${s.cvd_norm.toFixed(2)}, fund=${s.funding_signal.toFixed(2)}.`,
+          signal_score: s.signal_score
+        }
+      }
     }
   }
 
@@ -524,6 +586,19 @@ function intraStopLoss(snapshot, prices, regime) {
       stopPct = ov.sell_loss_pct ?? base.sell_loss_pct
     }
     // ALPHA and BETA: no fixed stop-loss % — exit via signal/flow logic at candle close
+
+    // Short stop-loss (GAMMA only — intra-candle, price rising against the short)
+    if (name === 'GAMMA') {
+      const shortStop = C.STRATEGY.GAMMA.short_stop_pct
+      for (const [pair, pos] of Object.entries(agent.shortPositions || {})) {
+        const now = prices[pair]
+        if (!pos || !now) continue
+        const lossPct = (now - pos.entryPrice) / pos.entryPrice * 100
+        if (lossPct >= shortStop) {
+          triggered.push({ name, pair, qty: pos.qty, pct: -lossPct, threshold: shortStop, isShort: true })
+        }
+      }
+    }
 
     if (stopPct == null) continue
 
