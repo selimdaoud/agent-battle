@@ -1,6 +1,6 @@
 'use strict'
 
-const VERSION = '1.0.6'
+const VERSION = '1.0.7'
 
 require('dotenv').config()
 const fs       = require('fs')
@@ -181,7 +181,7 @@ Your survival score rewards low drawdown more than raw returns.`,
       short_size_pct:    0.50, // fraction of short pool per position (50% = $1,000 max)
       short_profit_pct:  8,    // take profit on short at this % gain
       short_stop_pct:    8,    // forced cover at this % loss (hardcoded safety)
-      cover_signal:      0.00, // cover when signal recovers above this
+      cover_alpha:       0.40, // cover when signal recovers to (entryScore × cover_alpha) — dynamic, self-adjusting
       short_regimes: ['trending_down', 'volatile'],  // only short in these regimes
       regime_overrides: {
         trending_up:   { buy_signal: 0.14 },                              // slightly looser in a clear uptrend
@@ -229,7 +229,8 @@ function _defaultAgent(name) {
     portfolioHistory:     [startCapital],
     totalFees:            0,
     closedTrades:         [],  // { pair, return_pct } for last 100 closed long round-trips
-    shortPositions:       {},  // { pair: { qty, entryPrice, entryRound, collateral } }
+    shortPositions:       {},  // { pair: { qty, entryPrice, entryRound, collateral, entrySignalScore } }
+    shortCandidates:      {},  // { pair: { score, round } } — persistence gate: pair must qualify 2 consecutive candles
     shortCapital:         name === 'GAMMA' ? Math.round(C.INITIAL_CAPITAL * C.GAMMA_SHORT_POOL_PCT) : 0,
     closedShorts:         []   // { pair, return_pct } for last 100 closed short round-trips
   }
@@ -407,10 +408,11 @@ class World {
           if (t.action === 'SHORT' && t.proceeds_or_cost != null) {
             shortCap -= t.proceeds_or_cost
             agent.shortPositions[t.pair] = {
-              qty:        t.qty,
-              entryPrice: t.price,
-              collateral: t.proceeds_or_cost,
-              entryRound: row.round
+              qty:              t.qty,
+              entryPrice:       t.price,
+              collateral:       t.proceeds_or_cost,
+              entryRound:       row.round,
+              entrySignalScore: t.signal_score ?? null
             }
           } else if (t.action === 'COVER' && t.proceeds_or_cost != null) {
             shortCap += t.proceeds_or_cost
@@ -631,8 +633,9 @@ class World {
       holdings:            agent.holdings,
       entryPrices:         agent.entryPrices,
       entryRounds:         agent.entryRounds,
-      shortPositions:      agent.shortPositions || {},
-      shortCapital:        agent.shortCapital   || 0,
+      shortPositions:      agent.shortPositions  || {},
+      shortCapital:        agent.shortCapital    || 0,
+      shortCandidates:     agent.shortCandidates || {},
       totalValue:          _totalValue(agent, currentPrices),
       survivalScore:       agent.survivalScore,
       respawnCount:        agent.respawnCount,
@@ -772,12 +775,16 @@ class World {
       const collateral = decision.amount_usd * (1 + C.TAKER_FEE_PCT)
       const fee        = decision.amount_usd * C.TAKER_FEE_PCT
 
+      const entrySignalScore = decision.signal_score ?? null
       agent.shortCapital -= collateral
       agent.totalFees = (agent.totalFees || 0) + fee
       agent.shortPositions[decision.pair] = {
         qty, entryPrice, collateral,
-        entryRound: this._snapshot.round
+        entryRound: this._snapshot.round,
+        entrySignalScore
       }
+      // Clear persistence-gate candidate now that we've entered
+      if (agent.shortCandidates) delete agent.shortCandidates[decision.pair]
 
       trade = {
         action:              'SHORT',
@@ -786,6 +793,7 @@ class World {
         price:               entryPrice,
         proceeds_or_cost:    collateral,
         fee,
+        signal_score:        entrySignalScore,   // persisted for DB rebuild
         short_capital_after: agent.shortCapital
       }
 
@@ -820,6 +828,15 @@ class World {
         }
         if (decision.enforced_reason) trade.enforced_reason = decision.enforced_reason
       }
+    } else if (decision.action === 'SHORT_CANDIDATE') {
+      // Persistence gate: mark this pair as a short candidate; no trade executed
+      if (!agent.shortCandidates) agent.shortCandidates = {}
+      // Purge stale candidates (older than 1 round) before updating
+      const currentRound = this._snapshot.round
+      for (const [p, c] of Object.entries(agent.shortCandidates)) {
+        if (currentRound - c.round > 1) delete agent.shortCandidates[p]
+      }
+      agent.shortCandidates[decision.pair] = { score: decision.signal_score, round: currentRound }
     }
 
     // Log DECISION tick

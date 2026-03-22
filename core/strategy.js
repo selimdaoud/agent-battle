@@ -16,7 +16,7 @@ const fs   = require('fs')
 const path = require('path')
 const { C } = require('./world')
 
-const VERSION = '1.0.0'
+const VERSION = '1.0.1'
 
 // MEGA config — loaded at startup; hot-reloadable via reloadMegaConfig()
 const MEGA_CONFIG_PATH = path.join(__dirname, '../agents/mega-config.json')
@@ -288,14 +288,18 @@ function gammaDecide(ctx, smap, threatened) {
     if (!s || !pos) continue
     const spct = unrealizedShortPct(pair, ctx)
 
-    const takePft = spct != null && spct >  cfg.short_profit_pct
-    const stopOut = spct != null && spct < -cfg.short_stop_pct   // price rose = loss
-    const thesis  = s.signal_score > cfg.cover_signal            // no longer bearish
+    // Dynamic cover threshold: proportional to entry conviction
+    // e.g. entry score -0.38 × cover_alpha 0.40 = dynThr -0.152 (score must stay below this)
+    const entryScore   = pos.entrySignalScore ?? -0.5
+    const dynCoverThr  = entryScore * cfg.cover_alpha
+    const takePft      = spct != null && spct >  cfg.short_profit_pct
+    const stopOut      = spct != null && spct < -cfg.short_stop_pct   // price rose = loss
+    const thesisFaded  = s.signal_score > dynCoverThr                 // no longer bearish enough
 
-    if (stopOut || takePft || thesis) {
-      const why = stopOut  ? `short stop-loss (${spct.toFixed(1)}%) — price rising`
-                : takePft  ? `short profit ${cfg.short_profit_pct}% reached (${spct.toFixed(1)}%)`
-                :             `short thesis complete (score=${s.signal_score.toFixed(2)})`
+    if (stopOut || takePft || thesisFaded) {
+      const why = stopOut     ? `short stop-loss (${spct.toFixed(1)}%) — price rising against short`
+                : takePft     ? `short profit target ${cfg.short_profit_pct}% reached (${spct.toFixed(1)}%)`
+                :               `thesis faded (score=${s.signal_score.toFixed(3)} > dynThr=${dynCoverThr.toFixed(3)} = ${entryScore.toFixed(3)}×${cfg.cover_alpha})`
       return {
         action:       'COVER',
         pair,
@@ -383,9 +387,13 @@ function gammaDecide(ctx, smap, threatened) {
   }
 
   // ── SHORT: enter if strongly bearish signal in allowed regime ─────────────
+  // Persistence gate: pair must qualify on 2 consecutive candles before entry.
+  // Round N: signal qualifies → emit SHORT_CANDIDATE (stored in agent.shortCandidates)
+  // Round N+1: same pair qualifies again → emit SHORT (confirmed)
   const shortRegimes   = cfg.short_regimes || []
-  const shortPositions = ctx.shortPositions || {}
-  const shortCapital   = ctx.shortCapital   || 0
+  const shortPositions = ctx.shortPositions  || {}
+  const shortCandidates = ctx.shortCandidates || {}
+  const shortCapital   = ctx.shortCapital    || 0
 
   if (shortRegimes.includes(regime) && Object.keys(shortPositions).length < 1 && shortCapital > 50) {
     const bearish = ctx.signals
@@ -398,14 +406,29 @@ function gammaDecide(ctx, smap, threatened) {
       .sort((a, b) => a.signal_score - b.signal_score)  // most bearish first
 
     if (bearish.length > 0) {
-      const s      = bearish[0]
-      const amount = Math.min(shortCapital * cfg.short_size_pct, shortCapital)
-      if (amount >= 50) {
+      const s         = bearish[0]
+      const candidate = shortCandidates[s.pair]
+      const confirmed = candidate && candidate.round === ctx.round - 1
+
+      if (confirmed) {
+        // Second consecutive qualifying candle — enter the short
+        const amount = Math.min(shortCapital * cfg.short_size_pct, shortCapital)
+        if (amount >= 50) {
+          return {
+            action:       'SHORT',
+            pair:         s.pair,
+            amount_usd:   amount,
+            reasoning:    `GAMMA short CONFIRMED [${regime}] ${C.LABELS[s.pair] || s.pair}: score=${s.signal_score.toFixed(3)} confirmed 2 candles (prev=${candidate.score.toFixed(3)}), cvd=${s.cvd_norm.toFixed(2)}, fund=${s.funding_signal.toFixed(2)}.`,
+            signal_score: s.signal_score
+          }
+        }
+      } else {
+        // First qualifying candle — flag as candidate, wait for next candle to confirm
         return {
-          action:       'SHORT',
+          action:       'SHORT_CANDIDATE',
           pair:         s.pair,
-          amount_usd:   amount,
-          reasoning:    `GAMMA short [${regime}] ${C.LABELS[s.pair] || s.pair}: score=${s.signal_score.toFixed(2)} (thr=${cfg.short_signal}), cvd=${s.cvd_norm.toFixed(2)}, fund=${s.funding_signal.toFixed(2)}.`,
+          amount_usd:   0,
+          reasoning:    `GAMMA short CANDIDATE [${regime}] ${C.LABELS[s.pair] || s.pair}: score=${s.signal_score.toFixed(3)} (thr=${cfg.short_signal}), cvd=${s.cvd_norm.toFixed(2)} — confirming next candle`,
           signal_score: s.signal_score
         }
       }

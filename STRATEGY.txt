@@ -1,5 +1,5 @@
 MEGA STRATEGY — Human-Readable Reference
-Version 14 | Last updated: 2026-03-19
+Version 15 | Last updated: 2026-03-22
 ═══════════════════════════════════════════════════════════════════════════════
 
 
@@ -370,11 +370,40 @@ Additional constraints:
   - Minimum $50 available in short pool required to open a position
   - Position size = 50% of available short pool (max $1,000)
 
+Short entry — persistence gate (2-candle confirmation)
+───────────────────────────────────────────────────────
+Before GAMMA enters a short, the same pair must qualify on two consecutive
+candles. The flow is:
+
+  Round N: bearish signal passes all gates → emit SHORT_CANDIDATE
+           (stored in agent.shortCandidates[pair] = { score, round })
+  Round N+1: same pair qualifies again AND candidate.round === N
+           → emit SHORT (confirmed entry)
+
+If the signal disappears between candles, the candidate is discarded.
+Candidates older than 1 round are purged at the start of each decision.
+This gate eliminates single-candle noise entries that immediately reverse
+(the primary failure mode observed in early GAMMA short data).
+
 Cover (exit) conditions — evaluated before long sell logic each tick
 ─────────────────────────────────────────────────────────────────────
   Priority 1 — Stop-loss:    unrealised short loss > 8%   (price rose 8% from entry)
   Priority 2 — Take-profit:  unrealised short gain > 8%   (price fell 8% from entry)
-  Priority 3 — Thesis done:  signal_score > 0.00           (no longer bearish)
+  Priority 3 — Thesis faded: signal_score > dynCoverThr   (dynamic, see below)
+
+Dynamic cover threshold (cover_alpha = 0.40)
+─────────────────────────────────────────────
+Instead of a fixed cover_signal = 0.00, the cover threshold is proportional
+to the conviction at entry:
+
+  dynCoverThr = entrySignalScore × cover_alpha
+  e.g.: entry score −0.38 → dynCoverThr = −0.38 × 0.40 = −0.152
+
+GAMMA will cover only when the score rises above −0.152, not at 0.00.
+A stronger entry conviction requires the score to recover more before
+covering — giving the trade more room while still exiting well before
+the signal turns positive. The cover_alpha parameter (0.40) is a future
+candidate for pipeline proposals once ≥ 15 closed short trades accumulate.
 
 Stop-loss also fires intra-candle (same scan as long stop-losses) so a
 fast upward move does not require waiting a full tick.
@@ -450,6 +479,18 @@ PART 8 — EVOLUTION HISTORY (summary)
           well below the 42% floor. Ranging markets are structurally
           unfavourable for directional entries; the threshold was raised to
           require much stronger conviction before entering.
+
+  v14     GAMMA short book introduced: separate $2,000 short pool,
+          SHORT/COVER mechanics, closedShorts[] export, gammaShortMetrics()
+          in report pipeline.
+
+  v15     GAMMA short strategy hardened with two improvements:
+          (a) Persistence gate: pair must qualify on 2 consecutive bearish
+              candles before SHORT fires. First candle emits SHORT_CANDIDATE;
+              second confirms entry. Eliminates single-candle noise entries.
+          (b) Dynamic cover threshold (cover_alpha=0.40): cover fires when
+              signal_score > entryScore × 0.40 rather than fixed 0.00. Gives
+              high-conviction entries more room before covering.
 
   v13     strategy.deadweight_rounds_min: 5 → 7
           Triggered by MEGA's own deadweight exit rate of 66.7% over 3 sessions,

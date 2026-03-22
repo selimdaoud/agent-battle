@@ -1,5 +1,5 @@
 MEGA STRATEGY — Quantitative Design Review
-Version 14 | Date: 2026-03-19
+Version 15 | Date: 2026-03-22
 Reviewer: Internal
 ═══════════════════════════════════════════════════════════════════════════════
 
@@ -433,6 +433,46 @@ meaningful shifts in expected P&L.
 
   ───────────────────────────────────────────────────────────────────────────
 
+  cover_alpha (GAMMA, current: 0.40)
+  ────────────────────────────────────
+  Scales the cover threshold relative to entry conviction:
+    dynCoverThr = entrySignalScore × cover_alpha
+
+  Higher cover_alpha (closer to 1.0): dynCoverThr approaches entryScore —
+  GAMMA covers only when the signal nearly retraces to its entry level.
+  Maximises patience but risks large adverse moves if the thesis never
+  fully fades.
+
+  Lower cover_alpha (closer to 0): dynCoverThr approaches 0 — effectively
+  reproduces the old fixed cover_signal = 0.00 behaviour. Covers too quickly
+  on noise.
+
+  At 0.40, entry score −0.38 → dynCoverThr = −0.152. The score must rise
+  from −0.38 to above −0.152 before covering — approximately 40% retracement
+  of bearish conviction. This balance was chosen to avoid the observed
+  failure mode (covering after one noisy recovery candle) while not holding
+  into a full thesis reversal.
+
+  Sensitivity: HIGH for hold duration. A change of ±0.10 shifts the cover
+  point by ~10% of entry conviction per unit. This parameter is a future
+  pipeline proposal candidate (Rule 12) once ≥ 15 closed short trades exist.
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  SHORT_CANDIDATE persistence gate (GAMMA, rounds required: 2)
+  ─────────────────────────────────────────────────────────────
+  The persistence gate requires a bearish signal to qualify on 2 consecutive
+  candles before a SHORT is entered. This eliminates single-candle noise
+  entries. The cost is a 1-candle delay in every true entry.
+
+  Sensitivity: LOW for P&L per trade, but MEDIUM for entry frequency.
+  In fast-moving bearish markets, the best entry is often the first
+  qualifying candle; the gate delays it. The trade-off: fewer false
+  entries at the cost of slightly higher average entry price in genuine
+  bearish moves.
+
+  ───────────────────────────────────────────────────────────────────────────
+
   short_stop_pct / short_profit_pct (GAMMA, both currently: 8%)
   ───────────────────────────────────────────────────────────────
   Symmetric 8% thresholds create a 1:1 payoff ratio before edge. With a
@@ -852,7 +892,7 @@ SECTION 7 — SUMMARY RISK SCORECARD
   Self-evolution pipeline         GOOD              GOOD
   Threat mode                     WEAK              NOT VALIDATED
   Peer proxy assumption           ADEQUATE          NOT VALIDATED
-  GAMMA short book                ADEQUATE          NOT STARTED (new in v14)
+  GAMMA short book                GOOD              PARTIAL (3 trades, 0% WR — v15 improvements pending validation)
   Short → MEGA proposal pipeline  DESIGNED          PENDING DATA (Rule 11 gated)
 
   Overall: The mechanical structure of the strategy is sound. The primary
