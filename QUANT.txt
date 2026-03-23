@@ -877,7 +877,134 @@ They are recorded here to prevent them from being treated as resolved.
 
 
 ═══════════════════════════════════════════════════════════════════════════════
-SECTION 7 — SUMMARY RISK SCORECARD
+SECTION 7 — PARAMETER INVENTORY
+═══════════════════════════════════════════════════════════════════════════════
+
+Total tunable parameters across all agents: ~75
+
+Parameters are split between hardcoded constants (world.js, require restart)
+and hot-reloadable config (mega-config.json, applied immediately). Only MEGA
+parameters are modifiable by the self-evolution pipeline at runtime.
+
+  ALPHA — 12 parameters
+  ──────────────────────
+  Base (6):
+    buy_signal          0.12   min signal_score to enter
+    sell_signal        -0.15   signal_score at which ALPHA exits
+    cvd_buy_min         0.00   min cvd_norm to confirm buy flow
+    cvd_sell_max       -0.30   cvd below which ALPHA exits regardless of signal
+    funding_buy_max     0.50   max funding_signal for entry
+    buy_size_pct        0.25   fraction of capital per BUY
+
+  Regime overrides (6 values across 4 regimes):
+    trending_up    buy_signal → 0.08
+    trending_down  buy_signal → 0.28, cvd_buy_min → 0.10
+    ranging        buy_signal → 0.12
+    volatile       buy_signal → 0.40, buy_size_pct → 0.10
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  BETA — 10 parameters
+  ─────────────────────
+  Base (5):
+    funding_buy_min     0.20   min funding_signal (crowded shorts) for entry
+    fear_buy_max       40      max F&G index for fear-based entry
+    greed_sell_min     75      min F&G index to trigger greed-based exit
+    sell_signal         0.50   exit when signal_score rises above this
+    buy_size_pct        0.20   fraction of capital per BUY
+
+  Regime overrides (5 values across 4 regimes):
+    trending_up    funding_buy_min → 0.55
+    trending_down  fear_buy_max → 35
+    ranging        (none)
+    volatile       funding_buy_min → 0.30, fear_buy_max → 40, buy_size_pct → 0.12
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  GAMMA — 20 parameters
+  ──────────────────────
+  Long base (8):
+    buy_signal          0.18   min signal_score — high quality bar
+    cvd_buy_min         0.05   min cvd_norm to confirm buy flow
+    funding_buy_max     0.60   max funding_signal for entry
+    sell_loss_pct       5      exit if unrealised loss exceeds this %
+    sell_profit_pct    10      take profit at this % gain if flow turns
+    cash_min_pct        0.30   must keep at least 30% in cash
+    max_positions       2      hard cap on simultaneous open positions
+    buy_size_pct        0.15   fraction of capital per BUY
+
+  Short base (6):
+    short_signal       -0.25   score must be below this to enter a short
+    short_cvd_max      -0.10   cvd must confirm selling pressure
+    short_size_pct      0.50   fraction of short pool per position
+    short_profit_pct    8      take profit on short at this % gain
+    short_stop_pct      8      forced cover at this % loss
+    cover_alpha         0.40   cover when score > entryScore × cover_alpha
+
+  Regime overrides (6 values across 4 regimes):
+    trending_up    buy_signal → 0.14
+    trending_down  buy_signal → 0.25, sell_loss_pct → 3
+    ranging        (none)
+    volatile       buy_signal → 0.35, sell_loss_pct → 2, buy_size_pct → 0.08
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  MEGA — 27 parameters  [hot-reloadable via mega-config.json]
+  ─────────────────────────────────────────────────────────────
+  Base strategy (11):
+    buy_signal          0.15   entry gate, base
+    sell_signal        -0.12   exit gate
+    cvd_buy_min         0.02   flow confirmation for entry
+    cvd_sell_max       -0.25   flow-based exit trigger
+    funding_buy_max     0.55   positioning filter for entry
+    sell_loss_pct       6      hard stop-loss %
+    sell_profit_pct    12      take-profit target %
+    cash_min_pct        0.25   minimum cash reserve
+    max_positions       3      maximum concurrent open positions
+    buy_size_pct        0.20   flat fallback size before Kelly kicks in
+    deadweight_rounds_min 15   minimum rounds before deadweight check fires
+
+  Signal weights (7):
+    cvd_norm            0.2308
+    funding_signal      0.2256
+    momentum_1h         0.1846
+    rsi_norm            0.1231
+    volume_zscore       0.1026
+    fear_greed_signal   0.0821
+    momentum_4h         0.0513
+
+  Regime overrides (9 values across 4 regimes):
+    ranging        buy_signal → 0.52, buy_size_pct → 0.12, sell_loss_pct → 5
+    volatile       buy_signal → 0.30, cash_min_pct → 0.40
+    trending_down  buy_signal → 0.25, sell_loss_pct → 4
+    trending_up    buy_signal → 0.33, sell_loss_pct → 4
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  Global constants — 6  [world.js, affect all agents]
+  ──────────────────────
+    STOP_LOSS_PCT          0.08   auto-sell when position drops this fraction
+    MAX_POSITIONS          5      hard cap across all agents (portfolio level)
+    MAX_POSITION_PCT       0.30   max fraction of capital in any single position
+    MAX_EXPOSURE_PCT       0.80   max fraction of capital deployed across all positions
+    DEADWEIGHT_ROUNDS      5      default deadweight check period (before agent overrides)
+    SLIPPAGE_PCT           0.001  simulated slippage per trade
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  Pipeline-proposable parameters (currently active)
+  ───────────────────────────────────────────────────
+  Only MEGA parameters are modifiable by detect-changes.js. Current rules
+  target 4 of the 27 MEGA parameters:
+    strategy.deadweight_rounds_min     (Rules 9/9b)
+    regime_overrides.*.sell_loss_pct   (Rules 8/8b)
+    regime_overrides.*.buy_signal      (Rules 1/2/6/7)
+    signal_weights.*                   (no active rule yet — pending E1)
+    cover_alpha (GAMMA)                (no active rule yet — pending ≥15 shorts)
+
+
+═══════════════════════════════════════════════════════════════════════════════
+SECTION 8 — SUMMARY RISK SCORECARD
 ═══════════════════════════════════════════════════════════════════════════════
 
   COMPONENT                      DESIGN QUALITY    EMPIRICAL VALIDATION

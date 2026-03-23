@@ -50,6 +50,8 @@ const agentRegimeStopLossRate = {}
 const agentRegimeAvgHoldRounds = {}
 // agentRegimeDeadweightRate[agent][regime]= [deadweightRate_s1, ...]
 const agentRegimeDeadweightRate = {}
+// agentRegimeTradeCounts[agent][regime]  = [count_s1, ...] — trades per session per regime
+const agentRegimeTradeCounts    = {}
 // megaDeadweightRate                     = [rate_s1, ...] (overall, all regimes)
 const megaDeadweightRate  = []
 // signalAccuracy[signal]                 = [accuracy_s1, ...]
@@ -71,15 +73,18 @@ for (const session of sessions) {
     if (!agentRegimeStopLossRate[name])    agentRegimeStopLossRate[name]    = {}
     if (!agentRegimeAvgHoldRounds[name])   agentRegimeAvgHoldRounds[name]   = {}
     if (!agentRegimeDeadweightRate[name])  agentRegimeDeadweightRate[name]  = {}
+    if (!agentRegimeTradeCounts[name])     agentRegimeTradeCounts[name]     = {}
 
     for (const r of (agentMetrics.regimeStats || [])) {
-      if (!agentRegimeWinRates[name][r.regime])      agentRegimeWinRates[name][r.regime]      = []
-      if (!agentRegimeAvgPnl[name][r.regime])        agentRegimeAvgPnl[name][r.regime]        = []
-      if (!agentRegimeStopLossRate[name][r.regime])  agentRegimeStopLossRate[name][r.regime]  = []
-      if (!agentRegimeAvgHoldRounds[name][r.regime]) agentRegimeAvgHoldRounds[name][r.regime] = []
+      if (!agentRegimeWinRates[name][r.regime])       agentRegimeWinRates[name][r.regime]      = []
+      if (!agentRegimeAvgPnl[name][r.regime])         agentRegimeAvgPnl[name][r.regime]        = []
+      if (!agentRegimeStopLossRate[name][r.regime])   agentRegimeStopLossRate[name][r.regime]  = []
+      if (!agentRegimeAvgHoldRounds[name][r.regime])  agentRegimeAvgHoldRounds[name][r.regime] = []
       if (!agentRegimeDeadweightRate[name][r.regime]) agentRegimeDeadweightRate[name][r.regime] = []
+      if (!agentRegimeTradeCounts[name][r.regime])    agentRegimeTradeCounts[name][r.regime]   = []
       agentRegimeWinRates[name][r.regime].push(r.winRate)
       agentRegimeAvgPnl[name][r.regime].push(r.avgPnl)
+      agentRegimeTradeCounts[name][r.regime].push(r.count)
       if (r.stopLossRate    != null) agentRegimeStopLossRate[name][r.regime].push(r.stopLossRate)
       if (r.avgHoldRounds   != null) agentRegimeAvgHoldRounds[name][r.regime].push(r.avgHoldRounds)
       if (r.deadweightRate  != null) agentRegimeDeadweightRate[name][r.regime].push(r.deadweightRate)
@@ -109,6 +114,7 @@ const trends = {
   agentRegimeStopLossRate,
   agentRegimeAvgHoldRounds,
   agentRegimeDeadweightRate,
+  agentRegimeTradeCounts,
   megaDeadweightRate,
   signalAccuracy
 }

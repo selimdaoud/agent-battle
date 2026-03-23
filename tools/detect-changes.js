@@ -6,21 +6,24 @@
  * Reads sessions/trends.json, applies multi-session rules, and writes
  * agents/mega-changes-proposed.json when a change is warranted.
  *
- * Rules use the session-aligned mean of A/B/G agents (not MEGA) as the regime signal.
- * MEGA has sparse data; A/B/G run every session and provide a reliable market proxy.
+ * Unified regime threshold rule (replaces old Rules 1, 2, 6, 7):
+ *   For each regime, uses the best available data source:
+ *     - MEGA own per-regime data when MEGA had ≥ MEGA_MIN_TRADES_PER_SESSION trades
+ *       in that regime for ≥ REGIME_SESSIONS_MIN sessions  (direct evidence, higher confidence)
+ *     - A/B/G combined proxy otherwise                     (indirect evidence, lower confidence)
+ *   Actions:
+ *     win rate  < 42% for 3 sessions  → raise regime buy_signal (+0.03)
+ *     avg PnL   < −0.15% for 3 sessions → raise regime buy_signal (+0.03, higher priority)
+ *     win rate  > 70% for 3 sessions  → lower regime buy_signal (−0.03)
+ *     avg PnL   > +0.50% for 3 sessions → lower regime buy_signal (−0.03)
  *
- * Rules:
- *   1. A/B/G combined regime win rate < 42% for 3+ sessions  → raise MEGA regime buy_signal
- *   2. A/B/G combined regime avg PnL < -0.15% for 3+ sessions → raise MEGA regime buy_signal
- *   3. (removed — was peer vs MEGA comparison, no longer applicable)
+ * Other rules (unchanged):
  *   4. Signal accuracy > 65% for 5+ sessions                 → upweight signal
  *   5. Signal accuracy < 50% for 5+ sessions                 → downweight signal
- *   6. A/B/G combined regime win rate > 70% for 3+ sessions   → lower MEGA regime buy_signal
- *   7. A/B/G combined regime avg PnL > 0.50% for 3+ sessions  → lower MEGA regime buy_signal
- *   8. A/B/G combined stop_loss exit rate > 50% for 3+ sessions → raise MEGA regime sell_loss_pct (+1pp)
- *  8b. A/B/G combined stop_loss exit rate < 15% for 3+ sessions → lower MEGA regime sell_loss_pct (−1pp, floor 4%)
- *   9. MEGA deadweight exit rate > 40% for 3+ sessions           → raise strategy.deadweight_rounds_min (+2, max 15)
- *  9b. MEGA deadweight exit rate < 15% for 3+ sessions           → lower strategy.deadweight_rounds_min (−2, floor 5)
+ *   8. stop_loss exit rate > 50% for 3+ sessions → raise MEGA regime sell_loss_pct (+1pp)
+ *  8b. stop_loss exit rate < 15% for 3+ sessions → lower MEGA regime sell_loss_pct (−1pp, floor 4%)
+ *   9. MEGA deadweight exit rate > 40% for 3+ sessions → raise deadweight_rounds_min (+2, max 15)
+ *  9b. MEGA deadweight exit rate < 15% for 3+ sessions → lower deadweight_rounds_min (−2, floor 5)
  *
  * Only ONE proposal is written at a time (highest confidence first).
  * Rejected proposals are suppressed for REJECT_COOLDOWN sessions.
@@ -60,6 +63,7 @@ const DEADWEIGHT_STEP             = 2     // rounds to change per proposal
 const DEADWEIGHT_CEILING          = 15    // never propose deadweight_rounds_min above this
 const DEADWEIGHT_FLOOR            = 5     // never propose deadweight_rounds_min below this
 const PEERS                       = ['ALPHA', 'BETA', 'GAMMA']
+const MEGA_MIN_TRADES_PER_SESSION = 3     // min MEGA trades in a regime per session to qualify as own data
 
 // ── Build session-aligned combined A/B/G trend arrays ────────────────────────
 // Each agent's array may be shorter than total session count — assumed to
@@ -90,6 +94,54 @@ function buildCombined(dataByAgent) {
     combined[regime] = result
   }
   return combined
+}
+
+// ── MEGA own data helpers (populated after trends load) ───────────────────────
+
+/**
+ * Returns sessions where MEGA had >= MEGA_MIN_TRADES_PER_SESSION trades in [regime].
+ * Each entry: { winRate, avgPnl }. Called after `trends` is loaded.
+ */
+function megaQualifiedSessions(regime) {
+  const winArr   = trends?.agentRegimeWinRates?.MEGA?.[regime]    || []
+  const pnlArr   = trends?.agentRegimeAvgPnl?.MEGA?.[regime]      || []
+  const countArr = trends?.agentRegimeTradeCounts?.MEGA?.[regime] || []
+  const result   = []
+  for (let i = 0; i < winArr.length; i++) {
+    if ((countArr[i] ?? 0) >= MEGA_MIN_TRADES_PER_SESSION) {
+      result.push({ winRate: winArr[i], avgPnl: pnlArr[i] ?? null })
+    }
+  }
+  return result
+}
+
+/**
+ * Returns { winRates, avgPnls, source, sessionCount } for a regime.
+ * Prefers MEGA own data (direct evidence); falls back to A/B/G proxy.
+ * Returns null if neither has enough sessions.
+ * Must be called after combinedWinRates / combinedAvgPnl are built.
+ */
+function getRegimeSignal(regime) {
+  const own = megaQualifiedSessions(regime)
+  if (own.length >= REGIME_SESSIONS_MIN) {
+    const recent = own.slice(-REGIME_SESSIONS_MIN)
+    return {
+      winRates:     recent.map(s => s.winRate),
+      avgPnls:      recent.map(s => s.avgPnl).filter(v => v != null),
+      source:       'MEGA',
+      sessionCount: own.length
+    }
+  }
+  // Fall back to A/B/G combined proxy
+  const proxyWin = combinedWinRates[regime] || []
+  const proxyPnl = combinedAvgPnl[regime]   || []
+  if (proxyWin.length < REGIME_SESSIONS_MIN) return null
+  return {
+    winRates:     last(proxyWin, REGIME_SESSIONS_MIN),
+    avgPnls:      last(proxyPnl, REGIME_SESSIONS_MIN).filter(v => v != null),
+    source:       'proxy',
+    sessionCount: proxyWin.length
+  }
 }
 
 // ── Load files ────────────────────────────────────────────────────────────────
@@ -181,68 +233,74 @@ const combinedStopLossRate = buildCombined(trends.agentRegimeStopLossRate || {})
 // ── Collect candidates ────────────────────────────────────────────────────────
 const candidates = []
 
-// ── Rule 1: A/B/G combined regime win rate too low ───────────────────────────
-for (const [regime, winRates] of Object.entries(combinedWinRates)) {
-  if (winRates.length < REGIME_SESSIONS_MIN) continue
-  const recent = last(winRates, REGIME_SESSIONS_MIN)
-  if (mean(recent) >= REGIME_LOW_THRESHOLD) continue
-  const trendStr = recent.map(v => `${v.toFixed(0)}%`).join(', ')
-  const avg = mean(recent).toFixed(1)
-  const c = regimeCandidate(regime, REGIME_SESSIONS_MIN,
-    `${REGIME_SESSIONS_MIN} sessions — A/B/G combined ${regime} avg win rate: ${avg}%`,
-    (cur, prop) =>
-      `A/B/G combined ${regime}-regime average win rate is ${avg}% over the last ${REGIME_SESSIONS_MIN} sessions (${trendStr}), below the ${REGIME_LOW_THRESHOLD}% threshold. ` +
-      `Market conditions in ${regime} are unfavourable. Raising MEGA's entry threshold to ${prop.toFixed(3)} should filter for higher-conviction signals.`)
-  if (c) candidates.push(c)
-}
+// ── Unified regime buy_signal rule (replaces Rules 1, 2, 6, 7) ───────────────
+// For each regime, uses MEGA own data when ≥ MEGA_MIN_TRADES_PER_SESSION trades
+// exist for ≥ REGIME_SESSIONS_MIN sessions; falls back to A/B/G proxy otherwise.
+// MEGA own data gets higher confidence (+2) since it is direct evidence.
+const allRegimes = new Set([
+  ...Object.keys(combinedWinRates),
+  ...Object.keys(trends.agentRegimeWinRates?.MEGA || {})
+])
 
-// ── Rule 2: A/B/G combined regime expectancy persistently negative ────────────
-for (const [regime, avgPnls] of Object.entries(combinedAvgPnl)) {
-  if (avgPnls.length < REGIME_SESSIONS_MIN) continue
-  const recent = last(avgPnls, REGIME_SESSIONS_MIN)
-  if (mean(recent) >= EXPECTANCY_LOW) continue
-  const trendStr = recent.map(v => `${v.toFixed(2)}%`).join(', ')
-  const avg = mean(recent).toFixed(3)
-  const c = regimeCandidate(regime, REGIME_SESSIONS_MIN + 1,
-    `${REGIME_SESSIONS_MIN} sessions — A/B/G combined ${regime} avg PnL: ${avg}%`,
-    (cur, prop) =>
-      `A/B/G combined ${regime}-regime average PnL is ${avg}% over the last ${REGIME_SESSIONS_MIN} sessions ` +
-      `(${trendStr}), below the ${EXPECTANCY_LOW}% threshold. Regime conditions are persistently unfavourable. ` +
-      `Raising MEGA's entry threshold to ${prop.toFixed(3)} should concentrate exposure in higher-quality setups.`)
-  if (c) candidates.push(c)
-}
+for (const regime of allRegimes) {
+  const signal = getRegimeSignal(regime)
+  if (!signal) continue
 
-// ── Rule 6: A/B/G combined regime win rate too high — MEGA too selective ──────
-for (const [regime, winRates] of Object.entries(combinedWinRates)) {
-  if (winRates.length < REGIME_SESSIONS_MIN) continue
-  const recent = last(winRates, REGIME_SESSIONS_MIN)
-  if (mean(recent) <= REGIME_HIGH_THRESHOLD) continue
-  const trendStr = recent.map(v => `${v.toFixed(0)}%`).join(', ')
-  const avg = mean(recent).toFixed(1)
-  const c = looseRegimeCandidate(regime, REGIME_SESSIONS_MIN,
-    `${REGIME_SESSIONS_MIN} sessions — A/B/G combined ${regime} avg win rate: ${avg}% (too selective)`,
-    (cur, prop) =>
-      `A/B/G combined ${regime}-regime win rate is ${avg}% over the last ${REGIME_SESSIONS_MIN} sessions (${trendStr}), ` +
-      `above the ${REGIME_HIGH_THRESHOLD}% threshold. Conditions in ${regime} are strongly favourable. ` +
-      `Lowering MEGA's entry threshold from ${cur.toFixed(3)} to ${prop.toFixed(3)} should capture more volume without sacrificing edge.`)
-  if (c) candidates.push(c)
-}
+  const winMean  = mean(signal.winRates)
+  const pnlMean  = signal.avgPnls.length > 0 ? mean(signal.avgPnls) : null
+  const isMega   = signal.source === 'MEGA'
+  const label    = isMega
+    ? `MEGA own data (${signal.sessionCount} qualifying sessions in ${regime})`
+    : `A/B/G proxy (${signal.sessionCount} sessions, MEGA data thin in ${regime})`
+  const baseConf = isMega ? REGIME_SESSIONS_MIN + 2 : REGIME_SESSIONS_MIN
+  const winStr   = signal.winRates.map(v => `${v.toFixed(0)}%`).join(', ')
 
-// ── Rule 7: A/B/G combined regime expectancy strong — room to capture more ────
-for (const [regime, avgPnls] of Object.entries(combinedAvgPnl)) {
-  if (avgPnls.length < REGIME_SESSIONS_MIN) continue
-  const recent = last(avgPnls, REGIME_SESSIONS_MIN)
-  if (mean(recent) < EXPECTANCY_HIGH) continue
-  const trendStr = recent.map(v => `${v.toFixed(2)}%`).join(', ')
-  const avg = mean(recent).toFixed(3)
-  const c = looseRegimeCandidate(regime, REGIME_SESSIONS_MIN,
-    `${REGIME_SESSIONS_MIN} sessions — A/B/G combined ${regime} avg PnL: ${avg}% (strong expectancy)`,
-    (cur, prop) =>
-      `A/B/G combined ${regime}-regime average PnL is ${avg}% over the last ${REGIME_SESSIONS_MIN} sessions ` +
-      `(${trendStr}), consistently above ${EXPECTANCY_HIGH}%. Conditions in ${regime} have proven edge; ` +
-      `MEGA's current entry threshold ${cur.toFixed(3)} may be leaving profitable setups on the table. ` +
-      `Lowering to ${prop.toFixed(3)} to capture more volume while conditions are confirmed.`)
-  if (c) candidates.push(c)
+  // Tighten: win rate persistently low
+  if (winMean < REGIME_LOW_THRESHOLD) {
+    const c = regimeCandidate(regime, baseConf,
+      `${label} — ${regime} avg win rate: ${winMean.toFixed(1)}%`,
+      (cur, prop) =>
+        `${regime}-regime win rate is ${winMean.toFixed(1)}% over the last ${REGIME_SESSIONS_MIN} qualifying sessions ` +
+        `(${winStr}), below the ${REGIME_LOW_THRESHOLD}% threshold. Source: ${label}. ` +
+        `Raising MEGA's entry threshold to ${prop.toFixed(3)} filters for higher-conviction signals.`)
+    if (c) candidates.push(c)
+  }
+
+  // Tighten: avg PnL persistently negative (higher priority — +1 confidence)
+  if (pnlMean != null && pnlMean < EXPECTANCY_LOW) {
+    const pnlStr = signal.avgPnls.map(v => `${v.toFixed(2)}%`).join(', ')
+    const c = regimeCandidate(regime, baseConf + 1,
+      `${label} — ${regime} avg PnL: ${pnlMean.toFixed(3)}%`,
+      (cur, prop) =>
+        `${regime}-regime average PnL is ${pnlMean.toFixed(3)}% over the last ${REGIME_SESSIONS_MIN} qualifying sessions ` +
+        `(${pnlStr}), below the ${EXPECTANCY_LOW}% floor. Source: ${label}. ` +
+        `Raising MEGA's entry threshold to ${prop.toFixed(3)} concentrates exposure in higher-quality setups.`)
+    if (c) candidates.push(c)
+  }
+
+  // Loosen: win rate persistently high (MEGA too selective)
+  if (winMean > REGIME_HIGH_THRESHOLD) {
+    const c = looseRegimeCandidate(regime, baseConf,
+      `${label} — ${regime} avg win rate: ${winMean.toFixed(1)}% (too selective)`,
+      (cur, prop) =>
+        `${regime}-regime win rate is ${winMean.toFixed(1)}% over the last ${REGIME_SESSIONS_MIN} qualifying sessions ` +
+        `(${winStr}), above the ${REGIME_HIGH_THRESHOLD}% threshold. Source: ${label}. ` +
+        `Conditions in ${regime} are strongly favourable. Lowering entry threshold from ${cur.toFixed(3)} to ${prop.toFixed(3)} ` +
+        `captures more volume without sacrificing edge.`)
+    if (c) candidates.push(c)
+  }
+
+  // Loosen: avg PnL persistently high (room to capture more volume)
+  if (pnlMean != null && pnlMean > EXPECTANCY_HIGH) {
+    const pnlStr = signal.avgPnls.map(v => `${v.toFixed(2)}%`).join(', ')
+    const c = looseRegimeCandidate(regime, baseConf,
+      `${label} — ${regime} avg PnL: ${pnlMean.toFixed(3)}% (strong expectancy)`,
+      (cur, prop) =>
+        `${regime}-regime average PnL is ${pnlMean.toFixed(3)}% consistently above ${EXPECTANCY_HIGH}%. ` +
+        `Source: ${label}. Conditions in ${regime} have proven edge; ` +
+        `lowering to ${prop.toFixed(3)} captures more volume while conditions are confirmed.`)
+    if (c) candidates.push(c)
+  }
 }
 
 // ── Rule 8: Stop-loss hit rate persistently high — stop too tight ─────────────
