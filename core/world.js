@@ -1,6 +1,6 @@
 'use strict'
 
-const VERSION = '1.0.7'
+const VERSION = '1.0.8'
 
 require('dotenv').config()
 const fs       = require('fs')
@@ -286,6 +286,7 @@ class World {
       // First run — seed default snapshot
       this._snapshot = {
         round,
+        candleCount:    0,
         running: false,
         agents: {
           ALPHA: _defaultAgent('ALPHA'),
@@ -506,8 +507,15 @@ class World {
       lastSignals = sigRows.map(r => JSON.parse(r.payload))
     }
 
+    // Candle count = number of distinct rounds that closed a candle (have SIGNAL ticks)
+    const candleCountRow = this._db.prepare(
+      "SELECT COUNT(DISTINCT round) AS n FROM ticks WHERE type='SIGNAL'"
+    ).get()
+    const candleCount = candleCountRow?.n || 0
+
     this._snapshot = {
       round,
+      candleCount,
       running: false,
       agents,
       priceHistory,
@@ -627,6 +635,7 @@ class World {
     return {
       agentName,
       round:               this._snapshot.round,
+      candleCount:         this._snapshot.candleCount,
       archetype:           archetype.label,
       archetypeConstraint: archetype.constraint,
       capital:             agent.capital,
@@ -681,6 +690,7 @@ class World {
         if (hist.length > 50) hist.shift()
       }
     }
+    this._snapshot.candleCount++
     this.setLivePrices(priceMap)
   }
 
@@ -829,14 +839,16 @@ class World {
         if (decision.enforced_reason) trade.enforced_reason = decision.enforced_reason
       }
     } else if (decision.action === 'SHORT_CANDIDATE') {
-      // Persistence gate: mark this pair as a short candidate; no trade executed
+      // Persistence gate: mark this pair as a short candidate; no trade executed.
+      // Stores candleCount (not round) so confirmation requires a real new candle,
+      // not just any tick within the same candle interval.
       if (!agent.shortCandidates) agent.shortCandidates = {}
-      // Purge stale candidates (older than 1 round) before updating
-      const currentRound = this._snapshot.round
+      // Purge stale candidates (seen on a different candle than the current one)
+      const currentCandle = this._snapshot.candleCount
       for (const [p, c] of Object.entries(agent.shortCandidates)) {
-        if (currentRound - c.round > 1) delete agent.shortCandidates[p]
+        if (currentCandle - c.candleCount > 1) delete agent.shortCandidates[p]
       }
-      agent.shortCandidates[decision.pair] = { score: decision.signal_score, round: currentRound }
+      agent.shortCandidates[decision.pair] = { score: decision.signal_score, candleCount: currentCandle }
     }
 
     // Log DECISION tick

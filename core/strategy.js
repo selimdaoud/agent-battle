@@ -16,7 +16,7 @@ const fs   = require('fs')
 const path = require('path')
 const { C } = require('./world')
 
-const VERSION = '1.0.1'
+const VERSION = '1.0.2'
 
 // MEGA config — loaded at startup; hot-reloadable via reloadMegaConfig()
 const MEGA_CONFIG_PATH = path.join(__dirname, '../agents/mega-config.json')
@@ -387,13 +387,15 @@ function gammaDecide(ctx, smap, threatened) {
   }
 
   // ── SHORT: enter if strongly bearish signal in allowed regime ─────────────
-  // Persistence gate: pair must qualify on 2 consecutive candles before entry.
-  // Round N: signal qualifies → emit SHORT_CANDIDATE (stored in agent.shortCandidates)
-  // Round N+1: same pair qualifies again → emit SHORT (confirmed)
-  const shortRegimes   = cfg.short_regimes || []
-  const shortPositions = ctx.shortPositions  || {}
+  // Persistence gate: pair must qualify on 2 consecutive CANDLES before entry.
+  // Candle N: signal qualifies → emit SHORT_CANDIDATE (stored with candleCount=N)
+  // Candle N+1: same pair qualifies again AND ctx.candleCount > candidate.candleCount
+  //             → emit SHORT (confirmed). Mid-candle ticks reuse the same candleCount
+  //             so the gate cannot trip within the same candle interval.
+  const shortRegimes    = cfg.short_regimes || []
+  const shortPositions  = ctx.shortPositions  || {}
   const shortCandidates = ctx.shortCandidates || {}
-  const shortCapital   = ctx.shortCapital    || 0
+  const shortCapital    = ctx.shortCapital    || 0
 
   if (shortRegimes.includes(regime) && Object.keys(shortPositions).length < 1 && shortCapital > 50) {
     const bearish = ctx.signals
@@ -408,7 +410,8 @@ function gammaDecide(ctx, smap, threatened) {
     if (bearish.length > 0) {
       const s         = bearish[0]
       const candidate = shortCandidates[s.pair]
-      const confirmed = candidate && candidate.round === ctx.round - 1
+      // confirmed = candidate was recorded on a previous candle (not the current one)
+      const confirmed = candidate && ctx.candleCount > candidate.candleCount
 
       if (confirmed) {
         // Second consecutive qualifying candle — enter the short
@@ -422,8 +425,8 @@ function gammaDecide(ctx, smap, threatened) {
             signal_score: s.signal_score
           }
         }
-      } else {
-        // First qualifying candle — flag as candidate, wait for next candle to confirm
+      } else if (!candidate || ctx.candleCount > candidate.candleCount) {
+        // First qualifying candle (or candidate already expired) — flag and wait
         return {
           action:       'SHORT_CANDIDATE',
           pair:         s.pair,
@@ -432,6 +435,7 @@ function gammaDecide(ctx, smap, threatened) {
           signal_score: s.signal_score
         }
       }
+      // else: candidate exists for current candle — already emitted CANDIDATE this candle, hold
     }
   }
 
