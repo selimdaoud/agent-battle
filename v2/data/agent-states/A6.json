@@ -1,0 +1,31 @@
+{
+  "capital": 6218.522537516924,
+  "positions": {},
+  "tradeHistory": {
+    "UNIUSDT": [
+      {
+        "win": false,
+        "pnl_pct": -0.7988
+      }
+    ],
+    "XLMUSDT": [
+      {
+        "win": false,
+        "pnl_pct": -1.1918
+      }
+    ],
+    "XRPUSDT": [
+      {
+        "win": true,
+        "pnl_pct": 1.1554
+      }
+    ],
+    "BNBUSDT": [
+      {
+        "win": true,
+        "pnl_pct": 2.1352
+      }
+    ]
+  },
+  "tickCount": 82
+}

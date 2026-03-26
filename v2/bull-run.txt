@@ -1,0 +1,34 @@
+Here’s the practical checklist traders use in 2026 to confirm the macro regime has flipped to a genuine bull run (post-2024 halving cycle):
+1. Global Liquidity & Monetary Policy (the #1 macro driver)
+	•	DXY (U.S. Dollar Index) is trending lower (ideally breaking below 98–100 and staying there). A weakening dollar = more capital flows into risk assets like crypto.
+	•	Fed rate cuts + expanding global liquidity (Global Liquidity Index or M2 money supply growth turning positive and accelerating). Rate cuts or QE signals are rocket fuel.
+	•	Real yields falling (10-year Treasury yield minus inflation). High real yields crush risk assets.
+	•	Why it matters: Crypto has become highly correlated with global liquidity. When liquidity expands, BTC leads, then ETH, then alts.
+2. Risk-On Environment in Traditional Markets
+	•	Nasdaq/S&P 500 making higher highs with strong breadth (not just mega-caps).
+	•	VIX (fear gauge) staying low (<20) and not spiking on dips.
+	•	Credit spreads tightening (investors willing to take risk).
+3. Institutional & ETF Flows
+	•	Consistent net inflows into U.S. spot BTC & ETH ETFs (look for $500M–$1B+ weekly on average, not one-off spikes).
+	•	Positive futures open interest growth without extreme overheating (funding rates mildly positive, e.g., 0.01–0.05%, not 0.1%+ which signals euphoria traps).
+4. Cycle Timing (Halving Context)
+	•	We’re in the post-2024 halving window (historically 12–18 months post-halving is the strongest phase, peaking ~Q4 2025–Q4 2026).
+	•	2026 is often the “bear leg” or re-accumulation year in the classic 4-year cycle, but ETFs and institutional adoption have extended cycles. A true bull confirms when price breaks and holds the prior cycle ATH (~$126k in late 2025) with volume.
+5. On-Chain & Sentiment Confirmation (filters out traps)
+	•	MVRV Z-Score rising from low/negative territory (historically <0 = undervalued; climbing toward 3–4 = healthy bull).
+	•	BTC dominance dropping (below ~55–57% sustainably) → capital rotating into alts (classic bull market behavior).
+	•	Rising TVL in DeFi, active addresses, and whale accumulation.
+	•	Fear & Greed Index in 50–75 range (greed, but not extreme 90+ euphoria—that’s usually the top).
+6. Technical Regime Shift (price action must confirm)
+	•	Golden Cross on daily/weekly (50-day MA crosses above 200-day MA) with rising volume.
+	•	Price breaking key resistance (e.g., prior ATH or $100k psychological level) on high volume, no bearish divergences (RSI/OBV confirming).
+	•	Bollinger Band expansion upward after a squeeze.
+How to Track This Daily (Free Tools)
+	•	Liquidity & Macro: TradingView (DXY, Global M2 charts), FRED (Fed data), CrossBorder Capital or BeInCrypto liquidity index.
+	•	ETFs & Flows: CoinGlass or official ETF trackers (BlackRock IBIT, etc.).
+	•	On-Chain: Glassnode, CryptoQuant, Santiment.
+	•	Cycle Dashboards: CoinGlass Bull Market Peak Signals (use the reverse—when most are “not at peak” = room to run).
+	•	Sentiment: Alternative.me Fear & Greed.
+Quick Reality Check for March 2026
+Right now the market is not in a confirmed true bull regime—it’s in a post-2025 correction/re-accumulation phase (BTC ~$70–74k after peaking near $126k, high BTC dominance ~58%, mixed ETF flows, Fed still hawkish with limited cuts priced in, and global M2 showing short-term weakness). Many analysts call 2026 the “bear leg” of the cycle, with potential bottoming around Feb–March and a new leg higher later in the year if liquidity improves.
+Bottom line: Wait for confluence across liquidity, ETFs, dominance drop, and technical confirmation. One or two signals flashing green = noise or trap. 7+ lining up = load the boat. Trade the regime, not hope. Always use proper risk management—bull runs can have brutal 30–50% drawdowns even in the middle of them.

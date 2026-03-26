@@ -6,6 +6,7 @@ data/sim.db
 data/ohlcv/
 sessions/
 agents/mega-config.backup*
+v2/data/backtest.db
 
 # Dependencies
 node_modules/

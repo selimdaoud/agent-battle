@@ -1,0 +1,90 @@
+{
+  "capital": 6841.810346559063,
+  "positions": {
+    "ADAUSDT": {
+      "entryPrice": 0.26489674999999996,
+      "sizeUsd": 900,
+      "entryScore": 0.5404176429848426,
+      "entryTick": 51,
+      "entryRegime": {
+        "p_volatile": 0.002,
+        "p_trending_up": 0.8549,
+        "p_trending_down": 0.0046,
+        "p_ranging": 0.1386
+      }
+    }
+  },
+  "tradeHistory": {
+    "XLMUSDT": [
+      {
+        "win": false,
+        "pnl_pct": -0.9558
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.5396
+      },
+      {
+        "win": true,
+        "pnl_pct": 4.7176
+      }
+    ],
+    "SOLUSDT": [
+      {
+        "win": false,
+        "pnl_pct": -0.2995
+      }
+    ],
+    "BNBUSDT": [
+      {
+        "win": true,
+        "pnl_pct": 0.0141
+      },
+      {
+        "win": true,
+        "pnl_pct": 0.7656
+      }
+    ],
+    "MATICUSDT": [
+      {
+        "win": false,
+        "pnl_pct": -0.2995
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.2995
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.2995
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.2995
+      }
+    ],
+    "ETHUSDT": [
+      {
+        "win": false,
+        "pnl_pct": -1.5853
+      }
+    ],
+    "ATOMUSDT": [
+      {
+        "win": false,
+        "pnl_pct": -0.2436
+      }
+    ],
+    "DOTUSDT": [
+      {
+        "win": false,
+        "pnl_pct": -1.4397
+      },
+      {
+        "win": true,
+        "pnl_pct": 0.133
+      }
+    ]
+  },
+  "tickCount": 82
+}

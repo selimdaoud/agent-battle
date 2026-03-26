@@ -1,0 +1,77 @@
+{
+  "capital": 5032.192604909323,
+  "positions": {},
+  "tradeHistory": {
+    "XLMUSDT": [
+      {
+        "win": false,
+        "pnl_pct": -0.6575
+      },
+      {
+        "win": true,
+        "pnl_pct": 7.099
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.6916
+      }
+    ],
+    "SOLUSDT": [
+      {
+        "win": false,
+        "pnl_pct": -0.1686
+      }
+    ],
+    "BTCUSDT": [
+      {
+        "win": false,
+        "pnl_pct": -0.3399
+      }
+    ],
+    "MATICUSDT": [
+      {
+        "win": false,
+        "pnl_pct": -0.2995
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.2995
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.2995
+      }
+    ],
+    "ATOMUSDT": [
+      {
+        "win": false,
+        "pnl_pct": -0.2436
+      }
+    ],
+    "DOTUSDT": [
+      {
+        "win": false,
+        "pnl_pct": -1.0862
+      }
+    ],
+    "LTCUSDT": [
+      {
+        "win": false,
+        "pnl_pct": -0.7641
+      }
+    ],
+    "BNBUSDT": [
+      {
+        "win": true,
+        "pnl_pct": 0.7656
+      }
+    ],
+    "ADAUSDT": [
+      {
+        "win": true,
+        "pnl_pct": 2.3391
+      }
+    ]
+  },
+  "tickCount": 138
+}

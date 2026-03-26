@@ -1,5 +1,5 @@
 MEGA STRATEGY — Human-Readable Reference
-Version 15 | Last updated: 2026-03-22
+Version 16 | Last updated: 2026-03-23
 ═══════════════════════════════════════════════════════════════════════════════
 
 
@@ -276,44 +276,43 @@ automatically:
                           Only ONE proposal is generated per session.
 
   Current rules:
-    Rule 1: A/B/G combined regime win rate < 42% for 3 sessions
-            → raise MEGA regime buy_signal threshold (+0.03)
 
-    Rule 2: A/B/G combined regime avg PnL < −0.15% for 3 sessions
-            → raise MEGA regime buy_signal threshold (+0.03)
+    Unified regime buy_signal rule (replaces old Rules 1, 2, 6, 7):
+    ─────────────────────────────────────────────────────────────────
+    For each regime, the pipeline picks the best available data source:
 
-    Rule 6: A/B/G combined regime win rate > 70% for 3 sessions
-            → lower MEGA regime buy_signal threshold (−0.03, not below 0.05)
+      If MEGA had ≥ 3 trades in that regime per session for ≥ 3 sessions:
+        → use MEGA's own per-regime win rate and avg PnL  (direct evidence,
+          higher proposal confidence)
+      Otherwise:
+        → use A/B/G combined as proxy  (indirect evidence, lower confidence)
 
-    Rule 7: A/B/G combined regime avg PnL > +0.50% for 3 sessions
-            → lower MEGA regime buy_signal threshold (−0.03)
+    Actions triggered by either source:
+      win rate  < 42% for 3 sessions    → raise regime buy_signal (+0.03)
+      avg PnL   < −0.15% for 3 sessions → raise regime buy_signal (+0.03)
+      win rate  > 70% for 3 sessions    → lower regime buy_signal (−0.03)
+      avg PnL   > +0.50% for 3 sessions → lower regime buy_signal (−0.03)
 
-    Rule 8: A/B/G combined regime stop-loss exit rate > 50% for 3 sessions
-            → raise MEGA regime sell_loss_pct (+1pp, max 12%)
+    As MEGA accumulates data in each regime, the proxy is automatically
+    retired for that regime and replaced by MEGA's own evidence. This
+    eliminates the proxy mismatch failure mode where A/B/G at $1M show
+    healthy regime stats while MEGA at $500 consistently loses there.
 
-    Rule 8b: A/B/G combined regime stop-loss exit rate < 15% for 3 sessions
-            → lower MEGA regime sell_loss_pct (−1pp, floor 4%). The stop is
-            wider than current conditions require; tightening recovers P&L
-            on losing trades without increasing stop-out frequency.
+    Rule 8:  stop-loss exit rate > 50% for 3 sessions (A/B/G proxy)
+             → raise MEGA regime sell_loss_pct (+1pp, max 12%)
 
-    Rule 9: MEGA own deadweight exit rate > 40% overall for 3 sessions
-            → raise strategy.deadweight_rounds_min (+2 rounds, max 15)
+    Rule 8b: stop-loss exit rate < 15% for 3 sessions (A/B/G proxy)
+             → lower MEGA regime sell_loss_pct (−1pp, floor 4%)
+
+    Rule 9:  MEGA own deadweight exit rate > 40% overall for 3 sessions
+             → raise strategy.deadweight_rounds_min (+2 rounds, max 15)
 
     Rule 9b: MEGA own deadweight exit rate < 15% overall for 3 sessions
-            → lower strategy.deadweight_rounds_min (−2 rounds, floor 5).
-            Positions are consistently moving before the timer fires —
-            the minimum hold time has been raised above what conditions
-            require and should be allowed to come back down.
+             → lower strategy.deadweight_rounds_min (−2 rounds, floor 5)
 
-  Rules 1, 2, 6, 7, 8 use A/B/G peer agents as market proxies rather than
-  MEGA's own sparse data. MEGA's small capital ($500) means it trades far less
-  frequently than the $1M agents, so 3 sessions of MEGA-only data may be 6–10
-  trades — too thin for reliable statistics. A/B/G combined across the same
-  regime provides a far more stable signal.
-
-  Rule 9 uses MEGA's own exits because deadweight behaviour is agent-specific
-  (driven by MEGA's capital size and the pairs it holds), not a market-wide
-  regime condition.
+  Rules 8/8b continue to use A/B/G proxy because stop-loss behaviour is
+  driven by market volatility (a regime-wide condition) not by capital size.
+  Rule 9/9b use MEGA's own exits because deadweight is agent-specific.
 
   A proposed change is automatically applied at the end of the pipeline run.
   The TUI displays an informational overlay with the full justification and

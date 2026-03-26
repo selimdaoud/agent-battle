@@ -1,0 +1,1122 @@
+{
+  "posteriors": {
+    "A1": {
+      "weights.cvd_norm": {
+        "mu": 0.017356943646747735,
+        "sigma": 0.7071067811865476
+      },
+      "weights.funding_signal": {
+        "mu": 0.017356943646747735,
+        "sigma": 0.7071067811865476
+      },
+      "weights.momentum_1h": {
+        "mu": 0.017356943646747735,
+        "sigma": 0.7071067811865476
+      },
+      "weights.momentum_4h": {
+        "mu": 0.017356943646747735,
+        "sigma": 0.7071067811865476
+      },
+      "weights.rsi_norm": {
+        "mu": 0.017356943646747735,
+        "sigma": 0.7071067811865476
+      },
+      "weights.volume_zscore": {
+        "mu": 0.017356943646747735,
+        "sigma": 0.7071067811865476
+      },
+      "weights.fear_greed_signal": {
+        "mu": 0.017356943646747735,
+        "sigma": 0.7071067811865476
+      },
+      "weights.news_signal": {
+        "mu": 0.017356943646747735,
+        "sigma": 0.7071067811865476
+      },
+      "entry.buy_signal_per_regime.volatile": {
+        "mu": 0.017356943646747735,
+        "sigma": 0.7071067811865476
+      },
+      "entry.buy_signal_per_regime.trending_up": {
+        "mu": 0.017356943646747735,
+        "sigma": 0.7071067811865476
+      },
+      "entry.buy_signal_per_regime.trending_down": {
+        "mu": 0.017356943646747735,
+        "sigma": 0.7071067811865476
+      },
+      "entry.buy_signal_per_regime.ranging": {
+        "mu": 0.017356943646747735,
+        "sigma": 0.7071067811865476
+      },
+      "entry.cvd_buy_min": {
+        "mu": 0.017356943646747735,
+        "sigma": 0.7071067811865476
+      },
+      "entry.funding_buy_max": {
+        "mu": 0.017356943646747735,
+        "sigma": 0.7071067811865476
+      },
+      "exit.sell_signal": {
+        "mu": 0.017356943646747735,
+        "sigma": 0.7071067811865476
+      },
+      "exit.cvd_sell_max": {
+        "mu": 0.017356943646747735,
+        "sigma": 0.7071067811865476
+      },
+      "exit.sell_loss_pct_base": {
+        "mu": 0.017356943646747735,
+        "sigma": 0.7071067811865476
+      },
+      "exit.sell_loss_pct_trending_down": {
+        "mu": 0.017356943646747735,
+        "sigma": 0.7071067811865476
+      },
+      "exit.sell_profit_pct": {
+        "mu": 0.017356943646747735,
+        "sigma": 0.7071067811865476
+      },
+      "sizing.buy_size_pct_base": {
+        "mu": 0.017356943646747735,
+        "sigma": 0.7071067811865476
+      },
+      "sizing.cash_min_pct": {
+        "mu": 0.017356943646747735,
+        "sigma": 0.7071067811865476
+      },
+      "hold.deadweight_rounds_min": {
+        "mu": 0.017356943646747735,
+        "sigma": 0.7071067811865476
+      },
+      "hold.deadweight_pnl_threshold": {
+        "mu": 0.017356943646747735,
+        "sigma": 0.7071067811865476
+      },
+      "kelly.kelly_min_trades": {
+        "mu": 0.017356943646747735,
+        "sigma": 0.7071067811865476
+      },
+      "kelly.kelly_cap_multiplier": {
+        "mu": 0.017356943646747735,
+        "sigma": 0.7071067811865476
+      }
+    },
+    "A2": {
+      "weights.cvd_norm": {
+        "mu": 0.03333342123052799,
+        "sigma": 0.7071067811865476
+      },
+      "weights.funding_signal": {
+        "mu": 0.03333342123052799,
+        "sigma": 0.7071067811865476
+      },
+      "weights.momentum_1h": {
+        "mu": 0.03333342123052799,
+        "sigma": 0.7071067811865476
+      },
+      "weights.momentum_4h": {
+        "mu": 0.03333342123052799,
+        "sigma": 0.7071067811865476
+      },
+      "weights.rsi_norm": {
+        "mu": 0.03333342123052799,
+        "sigma": 0.7071067811865476
+      },
+      "weights.volume_zscore": {
+        "mu": 0.03333342123052799,
+        "sigma": 0.7071067811865476
+      },
+      "weights.fear_greed_signal": {
+        "mu": 0.03333342123052799,
+        "sigma": 0.7071067811865476
+      },
+      "weights.news_signal": {
+        "mu": 0.03333342123052799,
+        "sigma": 0.7071067811865476
+      },
+      "entry.buy_signal_per_regime.volatile": {
+        "mu": 0.03333342123052799,
+        "sigma": 0.7071067811865476
+      },
+      "entry.buy_signal_per_regime.trending_up": {
+        "mu": 0.03333342123052799,
+        "sigma": 0.7071067811865476
+      },
+      "entry.buy_signal_per_regime.trending_down": {
+        "mu": 0.03333342123052799,
+        "sigma": 0.7071067811865476
+      },
+      "entry.buy_signal_per_regime.ranging": {
+        "mu": 0.03333342123052799,
+        "sigma": 0.7071067811865476
+      },
+      "entry.cvd_buy_min": {
+        "mu": 0.03333342123052799,
+        "sigma": 0.7071067811865476
+      },
+      "entry.funding_buy_max": {
+        "mu": 0.03333342123052799,
+        "sigma": 0.7071067811865476
+      },
+      "exit.sell_signal": {
+        "mu": 0.03333342123052799,
+        "sigma": 0.7071067811865476
+      },
+      "exit.cvd_sell_max": {
+        "mu": 0.03333342123052799,
+        "sigma": 0.7071067811865476
+      },
+      "exit.sell_loss_pct_base": {
+        "mu": 0.03333342123052799,
+        "sigma": 0.7071067811865476
+      },
+      "exit.sell_loss_pct_trending_down": {
+        "mu": 0.03333342123052799,
+        "sigma": 0.7071067811865476
+      },
+      "exit.sell_profit_pct": {
+        "mu": 0.03333342123052799,
+        "sigma": 0.7071067811865476
+      },
+      "sizing.buy_size_pct_base": {
+        "mu": 0.03333342123052799,
+        "sigma": 0.7071067811865476
+      },
+      "sizing.cash_min_pct": {
+        "mu": 0.03333342123052799,
+        "sigma": 0.7071067811865476
+      },
+      "hold.deadweight_rounds_min": {
+        "mu": 0.03333342123052799,
+        "sigma": 0.7071067811865476
+      },
+      "hold.deadweight_pnl_threshold": {
+        "mu": 0.03333342123052799,
+        "sigma": 0.7071067811865476
+      },
+      "kelly.kelly_min_trades": {
+        "mu": 0.03333342123052799,
+        "sigma": 0.7071067811865476
+      },
+      "kelly.kelly_cap_multiplier": {
+        "mu": 0.03333342123052799,
+        "sigma": 0.7071067811865476
+      }
+    },
+    "A3": {
+      "weights.cvd_norm": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "weights.funding_signal": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "weights.momentum_1h": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "weights.momentum_4h": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "weights.rsi_norm": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "weights.volume_zscore": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "weights.fear_greed_signal": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "weights.news_signal": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "entry.buy_signal_per_regime.volatile": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "entry.buy_signal_per_regime.trending_up": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "entry.buy_signal_per_regime.trending_down": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "entry.buy_signal_per_regime.ranging": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "entry.cvd_buy_min": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "entry.funding_buy_max": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "exit.sell_signal": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "exit.cvd_sell_max": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "exit.sell_loss_pct_base": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "exit.sell_loss_pct_trending_down": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "exit.sell_profit_pct": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "sizing.buy_size_pct_base": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "sizing.cash_min_pct": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "hold.deadweight_rounds_min": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "hold.deadweight_pnl_threshold": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "kelly.kelly_min_trades": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "kelly.kelly_cap_multiplier": {
+        "mu": 0,
+        "sigma": 1
+      }
+    },
+    "A4": {
+      "weights.cvd_norm": {
+        "mu": 0.012757524747145206,
+        "sigma": 0.7071067811865476
+      },
+      "weights.funding_signal": {
+        "mu": 0.012757524747145206,
+        "sigma": 0.7071067811865476
+      },
+      "weights.momentum_1h": {
+        "mu": 0.012757524747145206,
+        "sigma": 0.7071067811865476
+      },
+      "weights.momentum_4h": {
+        "mu": 0.012757524747145206,
+        "sigma": 0.7071067811865476
+      },
+      "weights.rsi_norm": {
+        "mu": 0.012757524747145206,
+        "sigma": 0.7071067811865476
+      },
+      "weights.volume_zscore": {
+        "mu": 0.012757524747145206,
+        "sigma": 0.7071067811865476
+      },
+      "weights.fear_greed_signal": {
+        "mu": 0.012757524747145206,
+        "sigma": 0.7071067811865476
+      },
+      "weights.news_signal": {
+        "mu": 0.012757524747145206,
+        "sigma": 0.7071067811865476
+      },
+      "entry.buy_signal_per_regime.volatile": {
+        "mu": 0.012757524747145206,
+        "sigma": 0.7071067811865476
+      },
+      "entry.buy_signal_per_regime.trending_up": {
+        "mu": 0.012757524747145206,
+        "sigma": 0.7071067811865476
+      },
+      "entry.buy_signal_per_regime.trending_down": {
+        "mu": 0.012757524747145206,
+        "sigma": 0.7071067811865476
+      },
+      "entry.buy_signal_per_regime.ranging": {
+        "mu": 0.012757524747145206,
+        "sigma": 0.7071067811865476
+      },
+      "entry.cvd_buy_min": {
+        "mu": 0.012757524747145206,
+        "sigma": 0.7071067811865476
+      },
+      "entry.funding_buy_max": {
+        "mu": 0.012757524747145206,
+        "sigma": 0.7071067811865476
+      },
+      "exit.sell_signal": {
+        "mu": 0.012757524747145206,
+        "sigma": 0.7071067811865476
+      },
+      "exit.cvd_sell_max": {
+        "mu": 0.012757524747145206,
+        "sigma": 0.7071067811865476
+      },
+      "exit.sell_loss_pct_base": {
+        "mu": 0.012757524747145206,
+        "sigma": 0.7071067811865476
+      },
+      "exit.sell_loss_pct_trending_down": {
+        "mu": 0.012757524747145206,
+        "sigma": 0.7071067811865476
+      },
+      "exit.sell_profit_pct": {
+        "mu": 0.012757524747145206,
+        "sigma": 0.7071067811865476
+      },
+      "sizing.buy_size_pct_base": {
+        "mu": 0.012757524747145206,
+        "sigma": 0.7071067811865476
+      },
+      "sizing.cash_min_pct": {
+        "mu": 0.012757524747145206,
+        "sigma": 0.7071067811865476
+      },
+      "hold.deadweight_rounds_min": {
+        "mu": 0.012757524747145206,
+        "sigma": 0.7071067811865476
+      },
+      "hold.deadweight_pnl_threshold": {
+        "mu": 0.012757524747145206,
+        "sigma": 0.7071067811865476
+      },
+      "kelly.kelly_min_trades": {
+        "mu": 0.012757524747145206,
+        "sigma": 0.7071067811865476
+      },
+      "kelly.kelly_cap_multiplier": {
+        "mu": 0.012757524747145206,
+        "sigma": 0.7071067811865476
+      }
+    },
+    "A5": {
+      "weights.cvd_norm": {
+        "mu": 0.014094957640252972,
+        "sigma": 0.7071067811865476
+      },
+      "weights.funding_signal": {
+        "mu": 0.014094957640252972,
+        "sigma": 0.7071067811865476
+      },
+      "weights.momentum_1h": {
+        "mu": 0.014094957640252972,
+        "sigma": 0.7071067811865476
+      },
+      "weights.momentum_4h": {
+        "mu": 0.014094957640252972,
+        "sigma": 0.7071067811865476
+      },
+      "weights.rsi_norm": {
+        "mu": 0.014094957640252972,
+        "sigma": 0.7071067811865476
+      },
+      "weights.volume_zscore": {
+        "mu": 0.014094957640252972,
+        "sigma": 0.7071067811865476
+      },
+      "weights.fear_greed_signal": {
+        "mu": 0.014094957640252972,
+        "sigma": 0.7071067811865476
+      },
+      "weights.news_signal": {
+        "mu": 0.014094957640252972,
+        "sigma": 0.7071067811865476
+      },
+      "entry.buy_signal_per_regime.volatile": {
+        "mu": 0.014094957640252972,
+        "sigma": 0.7071067811865476
+      },
+      "entry.buy_signal_per_regime.trending_up": {
+        "mu": 0.014094957640252972,
+        "sigma": 0.7071067811865476
+      },
+      "entry.buy_signal_per_regime.trending_down": {
+        "mu": 0.014094957640252972,
+        "sigma": 0.7071067811865476
+      },
+      "entry.buy_signal_per_regime.ranging": {
+        "mu": 0.014094957640252972,
+        "sigma": 0.7071067811865476
+      },
+      "entry.cvd_buy_min": {
+        "mu": 0.014094957640252972,
+        "sigma": 0.7071067811865476
+      },
+      "entry.funding_buy_max": {
+        "mu": 0.014094957640252972,
+        "sigma": 0.7071067811865476
+      },
+      "exit.sell_signal": {
+        "mu": 0.014094957640252972,
+        "sigma": 0.7071067811865476
+      },
+      "exit.cvd_sell_max": {
+        "mu": 0.014094957640252972,
+        "sigma": 0.7071067811865476
+      },
+      "exit.sell_loss_pct_base": {
+        "mu": 0.014094957640252972,
+        "sigma": 0.7071067811865476
+      },
+      "exit.sell_loss_pct_trending_down": {
+        "mu": 0.014094957640252972,
+        "sigma": 0.7071067811865476
+      },
+      "exit.sell_profit_pct": {
+        "mu": 0.014094957640252972,
+        "sigma": 0.7071067811865476
+      },
+      "sizing.buy_size_pct_base": {
+        "mu": 0.014094957640252972,
+        "sigma": 0.7071067811865476
+      },
+      "sizing.cash_min_pct": {
+        "mu": 0.014094957640252972,
+        "sigma": 0.7071067811865476
+      },
+      "hold.deadweight_rounds_min": {
+        "mu": 0.014094957640252972,
+        "sigma": 0.7071067811865476
+      },
+      "hold.deadweight_pnl_threshold": {
+        "mu": 0.014094957640252972,
+        "sigma": 0.7071067811865476
+      },
+      "kelly.kelly_min_trades": {
+        "mu": 0.014094957640252972,
+        "sigma": 0.7071067811865476
+      },
+      "kelly.kelly_cap_multiplier": {
+        "mu": 0.014094957640252972,
+        "sigma": 0.7071067811865476
+      }
+    },
+    "A6": {
+      "weights.cvd_norm": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "weights.funding_signal": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "weights.momentum_1h": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "weights.momentum_4h": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "weights.rsi_norm": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "weights.volume_zscore": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "weights.fear_greed_signal": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "weights.news_signal": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "entry.buy_signal_per_regime.volatile": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "entry.buy_signal_per_regime.trending_up": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "entry.buy_signal_per_regime.trending_down": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "entry.buy_signal_per_regime.ranging": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "entry.cvd_buy_min": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "entry.funding_buy_max": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "exit.sell_signal": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "exit.cvd_sell_max": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "exit.sell_loss_pct_base": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "exit.sell_loss_pct_trending_down": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "exit.sell_profit_pct": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "sizing.buy_size_pct_base": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "sizing.cash_min_pct": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "hold.deadweight_rounds_min": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "hold.deadweight_pnl_threshold": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "kelly.kelly_min_trades": {
+        "mu": 0,
+        "sigma": 1
+      },
+      "kelly.kelly_cap_multiplier": {
+        "mu": 0,
+        "sigma": 1
+      }
+    }
+  },
+  "cursors": {
+    "A1": {
+      "timestamp": 1774444885711
+    },
+    "A2": {
+      "timestamp": 1774444885711
+    },
+    "A4": {
+      "timestamp": 1774444885711
+    },
+    "A5": {
+      "timestamp": 1774456864436
+    }
+  },
+  "prevRewards": {
+    "A1": 0.03471388729349547,
+    "A2": 0.06666684246105598,
+    "A4": 0.025515049494290412,
+    "A5": 0.028189915280505944
+  },
+  "streaks": {
+    "A1": {
+      "weights.cvd_norm": {
+        "direction": 1,
+        "count": 1
+      },
+      "weights.funding_signal": {
+        "direction": 1,
+        "count": 1
+      },
+      "weights.momentum_1h": {
+        "direction": 1,
+        "count": 1
+      },
+      "weights.momentum_4h": {
+        "direction": -1,
+        "count": 1
+      },
+      "weights.rsi_norm": {
+        "direction": 1,
+        "count": 1
+      },
+      "weights.volume_zscore": {
+        "direction": -1,
+        "count": 1
+      },
+      "weights.fear_greed_signal": {
+        "direction": 1,
+        "count": 1
+      },
+      "entry.buy_signal_per_regime.volatile": {
+        "direction": 1,
+        "count": 1
+      },
+      "entry.buy_signal_per_regime.trending_up": {
+        "direction": -1,
+        "count": 1
+      },
+      "entry.buy_signal_per_regime.ranging": {
+        "direction": 1,
+        "count": 1
+      },
+      "entry.cvd_buy_min": {
+        "direction": -1,
+        "count": 1
+      },
+      "entry.funding_buy_max": {
+        "direction": 1,
+        "count": 1
+      },
+      "exit.sell_signal": {
+        "direction": 1,
+        "count": 1
+      },
+      "exit.cvd_sell_max": {
+        "direction": -1,
+        "count": 1
+      },
+      "exit.sell_loss_pct_base": {
+        "direction": -1,
+        "count": 1
+      },
+      "exit.sell_loss_pct_trending_down": {
+        "direction": -1,
+        "count": 1
+      },
+      "exit.sell_profit_pct": {
+        "direction": 1,
+        "count": 1
+      },
+      "sizing.buy_size_pct_base": {
+        "direction": -1,
+        "count": 1
+      },
+      "sizing.cash_min_pct": {
+        "direction": -1,
+        "count": 1
+      },
+      "hold.deadweight_rounds_min": {
+        "direction": -1,
+        "count": 1
+      },
+      "hold.deadweight_pnl_threshold": {
+        "direction": -1,
+        "count": 1
+      },
+      "kelly.kelly_min_trades": {
+        "direction": 1,
+        "count": 1
+      },
+      "kelly.kelly_cap_multiplier": {
+        "direction": 1,
+        "count": 1
+      }
+    },
+    "A2": {
+      "weights.cvd_norm": {
+        "direction": -1,
+        "count": 1
+      },
+      "weights.funding_signal": {
+        "direction": -1,
+        "count": 1
+      },
+      "weights.momentum_1h": {
+        "direction": -1,
+        "count": 1
+      },
+      "weights.momentum_4h": {
+        "direction": -1,
+        "count": 1
+      },
+      "weights.rsi_norm": {
+        "direction": 1,
+        "count": 1
+      },
+      "weights.volume_zscore": {
+        "direction": -1,
+        "count": 1
+      },
+      "weights.fear_greed_signal": {
+        "direction": 1,
+        "count": 1
+      },
+      "weights.news_signal": {
+        "direction": -1,
+        "count": 1
+      },
+      "entry.buy_signal_per_regime.volatile": {
+        "direction": -1,
+        "count": 1
+      },
+      "entry.buy_signal_per_regime.trending_up": {
+        "direction": -1,
+        "count": 1
+      },
+      "entry.buy_signal_per_regime.trending_down": {
+        "direction": -1,
+        "count": 1
+      },
+      "entry.buy_signal_per_regime.ranging": {
+        "direction": -1,
+        "count": 1
+      },
+      "entry.cvd_buy_min": {
+        "direction": 1,
+        "count": 1
+      },
+      "entry.funding_buy_max": {
+        "direction": -1,
+        "count": 1
+      },
+      "exit.cvd_sell_max": {
+        "direction": -1,
+        "count": 1
+      },
+      "exit.sell_loss_pct_base": {
+        "direction": 1,
+        "count": 1
+      },
+      "exit.sell_loss_pct_trending_down": {
+        "direction": -1,
+        "count": 1
+      },
+      "exit.sell_profit_pct": {
+        "direction": 1,
+        "count": 1
+      },
+      "sizing.buy_size_pct_base": {
+        "direction": 1,
+        "count": 1
+      },
+      "sizing.cash_min_pct": {
+        "direction": -1,
+        "count": 1
+      },
+      "hold.deadweight_rounds_min": {
+        "direction": -1,
+        "count": 1
+      },
+      "hold.deadweight_pnl_threshold": {
+        "direction": 1,
+        "count": 1
+      },
+      "kelly.kelly_min_trades": {
+        "direction": -1,
+        "count": 1
+      },
+      "kelly.kelly_cap_multiplier": {
+        "direction": -1,
+        "count": 1
+      }
+    },
+    "A3": {},
+    "A4": {
+      "weights.cvd_norm": {
+        "direction": -1,
+        "count": 1
+      },
+      "weights.funding_signal": {
+        "direction": 1,
+        "count": 1
+      },
+      "weights.momentum_1h": {
+        "direction": -1,
+        "count": 1
+      },
+      "weights.momentum_4h": {
+        "direction": -1,
+        "count": 1
+      },
+      "weights.fear_greed_signal": {
+        "direction": 1,
+        "count": 1
+      },
+      "weights.news_signal": {
+        "direction": 1,
+        "count": 1
+      },
+      "entry.buy_signal_per_regime.volatile": {
+        "direction": 1,
+        "count": 1
+      },
+      "entry.buy_signal_per_regime.trending_up": {
+        "direction": 1,
+        "count": 1
+      },
+      "entry.buy_signal_per_regime.trending_down": {
+        "direction": -1,
+        "count": 1
+      },
+      "entry.buy_signal_per_regime.ranging": {
+        "direction": -1,
+        "count": 1
+      },
+      "entry.cvd_buy_min": {
+        "direction": -1,
+        "count": 1
+      },
+      "entry.funding_buy_max": {
+        "direction": 1,
+        "count": 1
+      },
+      "exit.sell_signal": {
+        "direction": -1,
+        "count": 1
+      },
+      "exit.cvd_sell_max": {
+        "direction": 1,
+        "count": 1
+      },
+      "exit.sell_loss_pct_base": {
+        "direction": -1,
+        "count": 1
+      },
+      "exit.sell_loss_pct_trending_down": {
+        "direction": 1,
+        "count": 1
+      },
+      "exit.sell_profit_pct": {
+        "direction": -1,
+        "count": 1
+      },
+      "sizing.buy_size_pct_base": {
+        "direction": -1,
+        "count": 1
+      },
+      "sizing.cash_min_pct": {
+        "direction": 1,
+        "count": 1
+      },
+      "hold.deadweight_rounds_min": {
+        "direction": -1,
+        "count": 1
+      },
+      "hold.deadweight_pnl_threshold": {
+        "direction": 1,
+        "count": 1
+      },
+      "kelly.kelly_min_trades": {
+        "direction": -1,
+        "count": 1
+      },
+      "kelly.kelly_cap_multiplier": {
+        "direction": -1,
+        "count": 1
+      }
+    },
+    "A5": {
+      "weights.cvd_norm": {
+        "direction": -1,
+        "count": 1
+      },
+      "weights.funding_signal": {
+        "direction": 1,
+        "count": 1
+      },
+      "weights.momentum_1h": {
+        "direction": -1,
+        "count": 1
+      },
+      "weights.rsi_norm": {
+        "direction": -1,
+        "count": 1
+      },
+      "weights.volume_zscore": {
+        "direction": 1,
+        "count": 1
+      },
+      "weights.fear_greed_signal": {
+        "direction": -1,
+        "count": 1
+      },
+      "weights.news_signal": {
+        "direction": 1,
+        "count": 1
+      },
+      "entry.buy_signal_per_regime.volatile": {
+        "direction": -1,
+        "count": 1
+      },
+      "entry.buy_signal_per_regime.trending_up": {
+        "direction": 1,
+        "count": 1
+      },
+      "entry.buy_signal_per_regime.trending_down": {
+        "direction": -1,
+        "count": 1
+      },
+      "entry.buy_signal_per_regime.ranging": {
+        "direction": -1,
+        "count": 1
+      },
+      "entry.cvd_buy_min": {
+        "direction": -1,
+        "count": 1
+      },
+      "entry.funding_buy_max": {
+        "direction": 1,
+        "count": 1
+      },
+      "exit.sell_signal": {
+        "direction": -1,
+        "count": 1
+      },
+      "exit.cvd_sell_max": {
+        "direction": -1,
+        "count": 1
+      },
+      "exit.sell_loss_pct_base": {
+        "direction": -1,
+        "count": 1
+      },
+      "exit.sell_loss_pct_trending_down": {
+        "direction": 1,
+        "count": 1
+      },
+      "exit.sell_profit_pct": {
+        "direction": 1,
+        "count": 1
+      },
+      "sizing.buy_size_pct_base": {
+        "direction": 1,
+        "count": 1
+      },
+      "sizing.cash_min_pct": {
+        "direction": -1,
+        "count": 1
+      },
+      "hold.deadweight_rounds_min": {
+        "direction": 1,
+        "count": 1
+      },
+      "hold.deadweight_pnl_threshold": {
+        "direction": -1,
+        "count": 1
+      },
+      "kelly.kelly_min_trades": {
+        "direction": -1,
+        "count": 1
+      },
+      "kelly.kelly_cap_multiplier": {
+        "direction": 1,
+        "count": 1
+      }
+    },
+    "A6": {}
+  },
+  "cooldowns": {
+    "A1": {
+      "weights.cvd_norm": 3,
+      "weights.funding_signal": 3,
+      "weights.momentum_1h": 3,
+      "weights.momentum_4h": 3,
+      "weights.rsi_norm": 3,
+      "weights.volume_zscore": 3,
+      "weights.fear_greed_signal": 3,
+      "entry.buy_signal_per_regime.volatile": 3,
+      "entry.buy_signal_per_regime.trending_up": 3,
+      "entry.buy_signal_per_regime.ranging": 3,
+      "entry.cvd_buy_min": 3,
+      "entry.funding_buy_max": 3,
+      "exit.sell_signal": 3,
+      "exit.cvd_sell_max": 3,
+      "exit.sell_loss_pct_base": 3,
+      "exit.sell_loss_pct_trending_down": 3,
+      "exit.sell_profit_pct": 3,
+      "sizing.buy_size_pct_base": 3,
+      "sizing.cash_min_pct": 3,
+      "hold.deadweight_rounds_min": 3,
+      "hold.deadweight_pnl_threshold": 3,
+      "kelly.kelly_cap_multiplier": 3
+    },
+    "A2": {
+      "weights.cvd_norm": 3,
+      "weights.funding_signal": 3,
+      "weights.momentum_4h": 3,
+      "weights.rsi_norm": 3,
+      "weights.volume_zscore": 3,
+      "weights.fear_greed_signal": 3,
+      "weights.news_signal": 3,
+      "entry.buy_signal_per_regime.volatile": 3,
+      "entry.buy_signal_per_regime.trending_up": 3,
+      "entry.buy_signal_per_regime.trending_down": 3,
+      "entry.buy_signal_per_regime.ranging": 3,
+      "entry.cvd_buy_min": 3,
+      "entry.funding_buy_max": 3,
+      "exit.cvd_sell_max": 3,
+      "exit.sell_loss_pct_base": 3,
+      "exit.sell_loss_pct_trending_down": 3,
+      "exit.sell_profit_pct": 3,
+      "sizing.buy_size_pct_base": 3,
+      "sizing.cash_min_pct": 3,
+      "hold.deadweight_rounds_min": 3,
+      "hold.deadweight_pnl_threshold": 3,
+      "kelly.kelly_min_trades": 3
+    },
+    "A3": {},
+    "A4": {
+      "weights.funding_signal": 3,
+      "weights.momentum_4h": 3,
+      "weights.fear_greed_signal": 3,
+      "weights.news_signal": 3,
+      "entry.buy_signal_per_regime.volatile": 3,
+      "entry.buy_signal_per_regime.trending_up": 3,
+      "entry.buy_signal_per_regime.trending_down": 3,
+      "entry.cvd_buy_min": 3,
+      "entry.funding_buy_max": 3,
+      "exit.cvd_sell_max": 3,
+      "exit.sell_loss_pct_base": 3,
+      "exit.sell_loss_pct_trending_down": 3,
+      "exit.sell_profit_pct": 3,
+      "sizing.cash_min_pct": 3,
+      "hold.deadweight_rounds_min": 3,
+      "hold.deadweight_pnl_threshold": 3,
+      "kelly.kelly_min_trades": 3,
+      "kelly.kelly_cap_multiplier": 3
+    },
+    "A5": {
+      "weights.cvd_norm": 3,
+      "weights.funding_signal": 3,
+      "weights.momentum_1h": 3,
+      "weights.rsi_norm": 3,
+      "weights.volume_zscore": 3,
+      "weights.fear_greed_signal": 3,
+      "weights.news_signal": 3,
+      "entry.buy_signal_per_regime.volatile": 3,
+      "entry.buy_signal_per_regime.trending_up": 3,
+      "entry.buy_signal_per_regime.trending_down": 3,
+      "entry.buy_signal_per_regime.ranging": 3,
+      "entry.cvd_buy_min": 3,
+      "entry.funding_buy_max": 3,
+      "exit.cvd_sell_max": 3,
+      "exit.sell_loss_pct_base": 3,
+      "exit.sell_loss_pct_trending_down": 3,
+      "exit.sell_profit_pct": 3,
+      "sizing.buy_size_pct_base": 3,
+      "sizing.cash_min_pct": 3,
+      "kelly.kelly_min_trades": 3,
+      "kelly.kelly_cap_multiplier": 3
+    },
+    "A6": {}
+  },
+  "metaHistory": {},
+  "metaCooldowns": {},
+  "metaCycleCount": 1758
+}

@@ -1,0 +1,120 @@
+{
+  "capital": 8450.648973755377,
+  "positions": {
+    "ADAUSDT": {
+      "entryPrice": 0.26699989999999996,
+      "sizeUsd": 1700.0000000000002,
+      "entryScore": 0.4479131622346178,
+      "entryTick": 57,
+      "entryRegime": {
+        "p_volatile": 0.0076,
+        "p_trending_up": 0.9924,
+        "p_trending_down": 0,
+        "p_ranging": 0
+      }
+    }
+  },
+  "tradeHistory": {
+    "SOLUSDT": [
+      {
+        "win": false,
+        "pnl_pct": -0.2017
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.4512
+      },
+      {
+        "win": true,
+        "pnl_pct": 1.6459
+      }
+    ],
+    "XLMUSDT": [
+      {
+        "win": false,
+        "pnl_pct": -0.5374
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.4185
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.598
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.4188
+      }
+    ],
+    "LINKUSDT": [
+      {
+        "win": false,
+        "pnl_pct": -0.5153
+      }
+    ],
+    "UNIUSDT": [
+      {
+        "win": false,
+        "pnl_pct": -0.5214
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.4105
+      }
+    ],
+    "BTCUSDT": [
+      {
+        "win": false,
+        "pnl_pct": -0.626
+      },
+      {
+        "win": true,
+        "pnl_pct": 1.5369
+      }
+    ],
+    "LTCUSDT": [
+      {
+        "win": false,
+        "pnl_pct": -0.6929
+      }
+    ],
+    "BNBUSDT": [
+      {
+        "win": false,
+        "pnl_pct": -0.1778
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.3981
+      }
+    ],
+    "DOTUSDT": [
+      {
+        "win": false,
+        "pnl_pct": -0.155
+      },
+      {
+        "win": true,
+        "pnl_pct": 0.8548
+      }
+    ],
+    "ADAUSDT": [
+      {
+        "win": false,
+        "pnl_pct": -0.0723
+      }
+    ],
+    "XRPUSDT": [
+      {
+        "win": false,
+        "pnl_pct": -0.1647
+      },
+      {
+        "win": true,
+        "pnl_pct": 0.1541
+      }
+    ]
+  },
+  "tickCount": 82
+}

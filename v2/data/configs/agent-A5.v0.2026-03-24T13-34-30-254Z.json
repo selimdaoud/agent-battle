@@ -1,0 +1,48 @@
+{
+  "version": 0,
+  "config": {
+    "weights": {
+      "cvd_norm": 0.21,
+      "funding_signal": 0.16,
+      "momentum_1h": 0.18,
+      "momentum_4h": 0.06,
+      "rsi_norm": 0.16,
+      "volume_zscore": 0.06,
+      "fear_greed_signal": 0.01,
+      "news_signal": 0.05
+    },
+    "entry": {
+      "buy_signal_base": 0.12,
+      "buy_signal_per_regime": {
+        "volatile": 0.23,
+        "trending_up": 0.15,
+        "trending_down": 0.23,
+        "ranging": 0.2
+      },
+      "cvd_buy_min": -0.02,
+      "funding_buy_max": 0.7
+    },
+    "exit": {
+      "sell_signal": -0.04,
+      "cvd_sell_max": -0.18,
+      "sell_loss_pct_base": 3,
+      "sell_loss_pct_trending_down": 3,
+      "sell_profit_pct": 8,
+      "take_profit_requires_cvd_turn": false
+    },
+    "sizing": {
+      "buy_size_pct_base": 0.34,
+      "max_positions": 4,
+      "cash_min_pct": 0.19
+    },
+    "hold": {
+      "deadweight_rounds_min": 3,
+      "deadweight_pnl_threshold": 1
+    },
+    "kelly": {
+      "kelly_min_trades": 4,
+      "kelly_cap_multiplier": 2
+    }
+  },
+  "reason": "adapt cycle: 21 param(s) updated"
+}

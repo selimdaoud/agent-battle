@@ -1,5 +1,5 @@
 MEGA STRATEGY — Quantitative Design Review
-Version 15 | Date: 2026-03-22
+Version 16 | Date: 2026-03-23
 Reviewer: Internal
 ═══════════════════════════════════════════════════════════════════════════════
 
@@ -118,6 +118,16 @@ of how well it is implemented.
   small sizes are filled at worse prices relative to signal quality. This
   assumption becomes more fragile if A/B/G ever diverge in archetype or
   signal set from MEGA.
+
+  Status (v16): The peer proxy assumption is now a fallback-only mechanism.
+  The unified adaptive rule in detect-changes.js (replacing Rules 1/2/6/7)
+  uses MEGA's own regime data when ≥3 qualified sessions exist (MEGA_MIN_TRADES_
+  PER_SESSION = 3 trades/session × REGIME_SESSIONS_MIN sessions), and falls
+  back to the A/B/G proxy only when MEGA's own evidence is insufficient.
+  As MEGA accumulates data, the proxy is retired regime by regime. The
+  miscalibration that caused MEGA's regime lock (trending_up raised 4×,
+  trending_down never raised) was a direct consequence of this assumption
+  being applied uniformly — this is now corrected structurally.
 
   ───────────────────────────────────────────────────────────────────────────
 
@@ -642,10 +652,16 @@ criterion.
 
   Pass criterion: Correlation ≥ 0.6 (moderate positive relationship).
 
-  Fail indicator: Correlation < 0.3 or negative. This would invalidate the
-  core assumption behind Rules 1, 2, 6, 7, and 8 — that A/B/G behaviour
-  is a valid proxy for MEGA. All five rules would need to be rebuilt using
-  MEGA-only data or a different proxy.
+  Fail indicator: Correlation < 0.3 or negative. This indicates A/B/G
+  behaviour is not a reliable proxy for MEGA. Under the unified adaptive
+  rule (v16), the proxy is already a fallback — a low correlation here
+  primarily affects early sessions before MEGA accumulates 3+ qualified
+  sessions per regime. It does NOT invalidate Rules 8/8b or the signal
+  weight rule candidates (those use MEGA-only or universal data).
+
+  Note: This test is still worth running once MEGA has ≥ 5 qualified sessions
+  in at least two regimes, to understand the magnitude of the proxy error
+  and calibrate the speed at which MEGA data should supersede the fallback.
 
 
 ═══════════════════════════════════════════════════════════════════════════════
@@ -865,15 +881,16 @@ They are recorded here to prevent them from being treated as resolved.
       should be disabled (short win rate persistently < 35% over 5+ sessions)
       is not currently defined. This needs a floor rule analogous to Rule 10.
 
-  Q5: Rules 1/2 (raise buy_signal) vs. 6/7 (lower buy_signal) remain
-      asymmetric: the raise conditions (win rate < 42%, avg PnL < −0.15%)
-      are easier to trigger than the lower conditions (win rate > 70%, avg
-      PnL > +0.50%). This creates a slow upward drift in buy_signal thresholds
-      over time unless conditions are consistently strong. Rules 8/8b and
-      9/9b are now symmetric (same session count, same step size, mirrored
-      thresholds), so the ratchet concern is resolved for sell_loss_pct and
-      deadweight_rounds_min. The asymmetry in buy_signal remains intentional
-      but its long-run effect on trade frequency should be monitored.
+  Q5: The unified adaptive rule (v16) replaced Rules 1/2/6/7 with a single
+      symmetric mechanism: the same win rate / avg P&L thresholds determine
+      whether buy_signal should tighten or loosen, using the same session
+      count and step size in both directions. The previous ratchet concern
+      (raises easier to trigger than lowers) is resolved. However: the
+      absolute thresholds for "bad enough to tighten" vs "good enough to
+      loosen" were carried over from the old rules. Once MEGA accumulates
+      5+ qualified sessions per regime, these thresholds should be reviewed
+      against observed win rate distributions to confirm they are symmetric
+      in practice, not just in design.
 
 
 ═══════════════════════════════════════════════════════════════════════════════
@@ -998,9 +1015,19 @@ parameters are modifiable by the self-evolution pipeline at runtime.
   target 4 of the 27 MEGA parameters:
     strategy.deadweight_rounds_min     (Rules 9/9b)
     regime_overrides.*.sell_loss_pct   (Rules 8/8b)
-    regime_overrides.*.buy_signal      (Rules 1/2/6/7)
+    regime_overrides.*.buy_signal      (Unified adaptive rule — v16)
     signal_weights.*                   (no active rule yet — pending E1)
     cover_alpha (GAMMA)                (no active rule yet — pending ≥15 shorts)
+
+  Unified adaptive rule (replaces Rules 1/2/6/7 as of v16):
+    For each regime, detect-changes.js checks whether MEGA's own data is
+    sufficient (≥ MEGA_MIN_TRADES_PER_SESSION trades/session × ≥
+    REGIME_SESSIONS_MIN sessions). If so, it uses MEGA own win rates and
+    avg P&L to tighten or loosen buy_signal. If not, it falls back to the
+    A/B/G proxy with lower confidence (baseConf = REGIME_SESSIONS_MIN
+    vs REGIME_SESSIONS_MIN + 2 for MEGA own data). A single code path
+    covers all four regimes. As MEGA data accumulates, the proxy is
+    automatically retired regime by regime without code changes.
 
 
 ═══════════════════════════════════════════════════════════════════════════════
@@ -1018,7 +1045,7 @@ SECTION 8 — SUMMARY RISK SCORECARD
   Deadweight logic                ADEQUATE          PARTIAL (F3 risk present)
   Self-evolution pipeline         GOOD              GOOD
   Threat mode                     WEAK              NOT VALIDATED
-  Peer proxy assumption           ADEQUATE          NOT VALIDATED
+  Peer proxy assumption           GOOD              ADEQUATE (fallback only — v16)
   GAMMA short book                GOOD              PARTIAL (3 trades, 0% WR — v15 improvements pending validation)
   Short → MEGA proposal pipeline  DESIGNED          PENDING DATA (Rule 11 gated)
 
