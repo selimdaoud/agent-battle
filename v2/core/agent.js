@@ -24,6 +24,9 @@ class Agent {
     this.positions     = {}            // pair → { entryPrice, sizeUsd, entryScore, entryTick, entryRegime }
     this.tickCount     = 0             // increments each candle
     this.tradeHistory  = {}            // pair → [{ win, pnl_pct }]  (rolling 20, for Kelly)
+    this.spotAccumMacroWasLow = false  // spot_accum_mode: tracks if macro was in capitulation
+    this.prevMacroUp          = null   // spot_accum_mode: previous tick's macro_p_trending_up
+    this.spotAccumMacroDepth  = 1.0   // spot_accum_mode: lowest macro seen since last reset
   }
 
   // ── Config hot-reload ─────────────────────────────────────────────────────
@@ -85,7 +88,8 @@ class Agent {
 
   totalValue(prices) {
     let val = this.capital
-    for (const [pair, pos] of Object.entries(this.positions)) {
+    for (const [posKey, pos] of Object.entries(this.positions)) {
+      const pair = pos.pair || posKey
       val += pos.sizeUsd * ((prices[pair] || pos.entryPrice) / pos.entryPrice)
     }
     return val
@@ -111,7 +115,9 @@ class Agent {
     const svByPair  = Object.fromEntries(signalVectors.map(sv => [sv.pair, sv]))
 
     // ── 1. Exits ────────────────────────────────────────────────────────────
-    for (const [pair, pos] of Object.entries(this.positions)) {
+    for (const [posKey, pos] of Object.entries(this.positions)) {
+      if (pos.blocked) continue   // position bloquée manuellement — protégée des sorties auto
+      const pair = pos.pair || posKey
       const sv  = svByPair[pair]
       const mid = prices[pair]
       if (!sv || !mid) continue
@@ -148,8 +154,8 @@ class Agent {
           exit_reason = 'take_profit'
         }
 
-      // Priority 3 — macro regime exit (trend_follow_mode only): exit when 4h trend turns bearish
-      } else if (cfg.entry.trend_follow_mode) {
+      // Priority 3 — macro regime exit (trend_follow_mode / spot_accum_mode): exit when 4h trend turns bearish
+      } else if (cfg.entry.trend_follow_mode || cfg.entry.spot_accum_mode) {
         const macroExitMin = cfg.exit.trend_follow_macro_exit ?? 0.4
         if ((sv.macro_p_trending_up ?? 1) < macroExitMin && holdingRounds >= minHold) {
           exit_reason = 'macro_exit'
@@ -182,7 +188,7 @@ class Agent {
         // Update capital and trade history
         this.capital += pos.sizeUsd + fill.pnl_usd - fill.fee_usd
         this._recordTrade(pair, fill.pnl_pct)
-        delete this.positions[pair]
+        delete this.positions[posKey]
 
         actions.push({
           type:          'EXIT',
@@ -208,7 +214,12 @@ class Agent {
 
     for (const sv of signalVectors) {
       const { pair } = sv
-      if (this.positions[pair]) continue   // already holding this pair
+      // already holding this pair (via agent buy or manual buy)
+      if (Object.entries(this.positions).some(([k, p]) => (p.pair || k) === pair)) continue
+
+      // Gate 0 — pair allowlist (if configured, restricts universe for this agent)
+      const allowedPairs = cfg.entry.allowed_pairs
+      if (allowedPairs && !allowedPairs.includes(pair)) continue
 
       const mid   = prices[pair]
       if (!mid) continue
@@ -217,7 +228,58 @@ class Agent {
       const regime = { p_volatile: sv.p_volatile, p_trending_up: sv.p_trending_up,
                        p_trending_down: sv.p_trending_down, p_ranging: sv.p_ranging }
 
-      if (cfg.entry.trend_follow_mode) {
+      if (cfg.entry.spot_accum_mode) {
+        // ── Spot accumulation mode: buy BTC dip when macro recovers from capitulation ──
+
+        // only operates on BTCUSDT
+        if (pair !== 'BTCUSDT') continue
+
+        const macroUp  = sv.macro_p_trending_up ?? 0
+        const lowThresh = cfg.entry.spot_accum_macro_low_threshold ?? 0.20
+        if (macroUp < lowThresh) this.spotAccumMacroWasLow = true
+        if (macroUp < this.spotAccumMacroDepth) this.spotAccumMacroDepth = macroUp
+
+        const prevMacro    = this.prevMacroUp ?? macroUp
+        this.prevMacroUp   = macroUp
+
+        const priceCeiling = cfg.entry.spot_accum_price_ceiling ?? Infinity
+        const macroMin     = cfg.entry.spot_accum_macro_min     ?? 0.30
+
+        if (mid > priceCeiling) {
+          actions.push({ type: 'REJECTED', pair, gate_failed: 'sa_price_ceiling',
+            signal_score: score, regimeProbs: regime, configVersion: this.configVersion })
+          continue
+        }
+        if (!this.spotAccumMacroWasLow) {
+          actions.push({ type: 'REJECTED', pair, gate_failed: 'sa_macro_was_low',
+            signal_score: score, regimeProbs: regime, configVersion: this.configVersion })
+          continue
+        }
+        if (macroUp < macroMin) {
+          actions.push({ type: 'REJECTED', pair, gate_failed: 'sa_macro_min',
+            signal_score: score, regimeProbs: regime, configVersion: this.configVersion })
+          continue
+        }
+        const dipMinPct = cfg.entry.spot_accum_dip_min_pct ?? 0
+        if (dipMinPct > 0 && (sv.btc_dip_pct ?? 0) > -dipMinPct) {
+          actions.push({ type: 'REJECTED', pair, gate_failed: 'sa_dip_insufficient',
+            signal_score: score, regimeProbs: regime, configVersion: this.configVersion })
+          continue
+        }
+        const atrMinPct = cfg.entry.spot_accum_atr_min_pct ?? 0
+        if (atrMinPct > 0 && (sv.btc_atr_4h_pct ?? 0) < atrMinPct) {
+          actions.push({ type: 'REJECTED', pair, gate_failed: 'sa_atr_insufficient',
+            signal_score: score, regimeProbs: regime, configVersion: this.configVersion })
+          continue
+        }
+        if (macroUp <= prevMacro) {
+          actions.push({ type: 'REJECTED', pair, gate_failed: 'sa_macro_rising',
+            signal_score: score, regimeProbs: regime, configVersion: this.configVersion })
+          continue
+        }
+        // all gates passed — fall through to sizing
+
+      } else if (cfg.entry.trend_follow_mode) {
         // ── Trend-follow mode: bypass composite score, use regime + raw signal gates only ──
 
         // Gate TF-1 — 4h macro must be bullish
@@ -232,6 +294,14 @@ class Agent {
         const tfDownMax = cfg.entry.trend_follow_down_max ?? 0.4
         if (regime.p_trending_down > tfDownMax) {
           actions.push({ type: 'REJECTED', pair, gate_failed: 'tf_regime_down',
+            signal_score: score, regimeProbs: regime, configVersion: this.configVersion })
+          continue
+        }
+
+        // Gate TF-2b — block ranging regime: no clear direction, trend-follow has no edge
+        const tfRangingMax = cfg.entry.trend_follow_ranging_max ?? null
+        if (tfRangingMax !== null && regime.p_ranging > tfRangingMax) {
+          actions.push({ type: 'REJECTED', pair, gate_failed: 'tf_ranging',
             signal_score: score, regimeProbs: regime, configVersion: this.configVersion })
           continue
         }
@@ -380,29 +450,37 @@ class Agent {
         continue
       }
 
-      // Kelly check — skip if negative expectancy
-      const sizeFraction = this.kellySize(pair)
+      // Sizing: spot_accum_mode uses fixed allocation; others use Kelly
+      const sizeFraction = cfg.entry.spot_accum_mode
+        ? (cfg.sizing.spot_accum_size_pct ?? cfg.sizing.buy_size_pct_base)
+        : this.kellySize(pair)
       if (sizeFraction <= 0) continue
 
       // Track best qualifying entry by score
       if (!bestEntry || score > bestEntry.score) {
-        bestEntry = { pair, score, regime, sizeFraction, mid }
+        bestEntry = { pair, score, regime, sizeFraction, mid, isSpotAccum: !!cfg.entry.spot_accum_mode }
       }
     }
 
     if (bestEntry) {
-      const { pair, score, regime, sizeFraction, mid } = bestEntry
+      const { pair, score, regime, sizeFraction, mid, isSpotAccum } = bestEntry
       const sizeUsd = Math.min(this.capital * sizeFraction, this.capital * 0.99)
       if (sizeUsd >= 1) {
         const fill = simEntry(mid, sizeUsd)
 
         this.capital -= sizeUsd
         this.positions[pair] = {
+          pair,
           entryPrice: fill.price,
           sizeUsd,
           entryScore: score,
           entryTick:  this.tickCount,
           entryRegime: regime
+        }
+
+        if (isSpotAccum) {
+          this.spotAccumMacroWasLow = false  // reset: no re-entry on same dip
+          this.spotAccumMacroDepth  = 1.0   // reset depth tracker for next cycle
         }
 
         actions.push({
@@ -447,7 +525,7 @@ class Agent {
       const mid = prices[pair]
       if (!mid) continue
 
-      if (this.positions[pair]) {
+      if (Object.entries(this.positions).some(([k, p]) => (p.pair || k) === pair)) {
         result[pair] = { held: true }
         continue
       }
@@ -484,7 +562,9 @@ class Agent {
     const actions = []
     const cfg     = this.config
 
-    for (const [pair, pos] of Object.entries(this.positions)) {
+    for (const [posKey, pos] of Object.entries(this.positions)) {
+      if (pos.blocked) continue   // position bloquée — stop intra-candle désactivé
+      const pair = pos.pair || posKey
       const mid = prices[pair]
       if (!mid) continue
 
@@ -493,7 +573,7 @@ class Agent {
 
         this.capital += pos.sizeUsd + fill.pnl_usd - fill.fee_usd
         this._recordTrade(pair, fill.pnl_pct)
-        delete this.positions[pair]
+        delete this.positions[posKey]
 
         actions.push({
           type:          'EXIT',
@@ -525,11 +605,13 @@ class Agent {
 
   snapshot(prices) {
     const totalVal = this.totalValue(prices)
-    const positions = Object.entries(this.positions).map(([pair, pos]) => {
+    const positions = Object.entries(this.positions).map(([posKey, pos]) => {
+      const pair       = pos.pair || posKey
       const mid        = prices[pair] || pos.entryPrice
       const unrealised = ((mid - pos.entryPrice) / pos.entryPrice) * 100
-      return { pair, sizeUsd: pos.sizeUsd, entryPrice: pos.entryPrice,
-               currentPrice: mid, unrealisedPct: Math.round(unrealised * 100) / 100 }
+      return { posId: posKey, pair, sizeUsd: pos.sizeUsd, entryPrice: pos.entryPrice,
+               currentPrice: mid, unrealisedPct: Math.round(unrealised * 100) / 100,
+               blocked: pos.blocked || false }
     })
     return {
       id:            this.id,

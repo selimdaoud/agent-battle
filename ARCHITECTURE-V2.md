@@ -1,7 +1,8 @@
 # Adaptive Trading Agent — Architecture v2
 
-**Status:** Proposal
+**Status:** Live
 **Date:** 2026-03-23
+**Last updated:** 2026-03-29
 
 ---
 
@@ -199,7 +200,7 @@ The agent's decision logic is unchanged. The composite score is computed, thresh
 
 N instances of a single parameterised `Agent` class. All instances have identical structure; they differ only in their config values and their mode (live or paper).
 
-**Config space (~25 parameters):**
+**Config space (~26 parameters):**
 
 ```
 Signal weights (8)    cvd_norm_weight, funding_weight, momentum_1h_weight, ...,
@@ -212,10 +213,11 @@ Entry (5)             buy_signal_base
 Gates (2)             cvd_buy_min          (flow confirmation)
                       funding_buy_max      (positioning filter)
 
-Exit (4)              sell_loss_pct_base, sell_loss_pct_trending_down
-                      sell_profit_pct, take_profit_requires_cvd_turn
+Exit (5)              sell_signal, cvd_sell_max
+                      sell_loss_pct_base, sell_loss_pct_trending_down
+                      sell_profit_pct
 
-Sizing (3)            buy_size_pct_base, max_positions, cash_min_pct
+Sizing (2)            buy_size_pct_base, cash_min_pct
 
 Hold time (2)         deadweight_rounds_min, deadweight_pnl_threshold
 
@@ -224,13 +226,39 @@ Kelly (2)             kelly_min_trades, kelly_cap_multiplier
 
 The agent's `decide()` function maps any valid config to a decision. No hardcoded values exist inside it.
 
-**Initial setup:** Launch 6–8 instances spanning the config space — some conservative (high thresholds, tight stops), some aggressive, some seeded from v1 defaults. 2–3 live, the rest paper. The adaptation engine will converge configs toward better-performing regions over time; the live/paper split ensures real capital is not exposed to unexplored config territory.
+**Entry modes:** Three distinct entry strategies are available via config flags:
+
+| Mode | Flag | Behaviour |
+|---|---|---|
+| `trend_follow_mode` | `entry.trend_follow_mode: true` | Bypasses composite score. Entry gated by 4h macro regime, 15m regime, CVD dip, 1h momentum. Buys pullbacks within confirmed uptrends. |
+| `spot_accum_mode` | `entry.spot_accum_mode: true` | BTC only. Buys when macro recovers from capitulation (macro was below threshold, now rising above floor). Long-term accumulation logic. |
+| Standard mode | neither flag set | Composite score vs regime-blended threshold. CVD and funding gates applied. |
+
+**Important:** `trend_follow_mode` bypasses most of the standard-mode PARAM_SPACE parameters at entry (buy_signal_per_regime, cvd_buy_min, funding_buy_max) and uses different exit logic (macro_exit instead of signal/cvd exit). See Section 4.5 for adaptation implications.
+
+**Current pool (as of 2026-03-29):**
+
+| Agent | Mode | Strategy | Role |
+|---|---|---|---|
+| A1 | Live | trend_follow | Primary live TF agent |
+| A2 | Live | trend_follow | Primary live TF agent, most adapted (v31+) |
+| A3 | Live | spot_accum | BTC accumulation on macro capitulation/recovery |
+| A4 | Paper | trend_follow | Scalper variant — tight stops (3%), low TP (10%), short deadweight (10r), aggressive Kelly. Explores fast-exit region of PARAM_SPACE. |
+| A5 | Paper | trend_follow | TF explorer |
+| A6 | Paper | trend_follow | TF explorer |
+
+Live agents (A1–A3): `LIVE_AGENTS=3`. State is persisted to `data/agent-states/` and reloaded on restart.
+Paper agents (A4–A6): `PAPER_AGENTS=3`. State resets on restart by design. A3 was promoted to live specifically because `spot_accum_mode` accumulates positions over days — paper reset destroys this continuity.
+
+**Correlation and diversification:** Empirically measured across ~235 ticks, A1 and A4 show r=0.977 pairwise return correlation; A1/A2/A4 all exit the same pairs at the same timestamps in 56–100% of cases. This is structural: all three see the same tick stream and share identical TF gate thresholds. To generate useful meta-adapt signal, paper agents must explore different regions of PARAM_SPACE — not just different config values near the same region. A4 was explicitly repositioned as a scalper variant (different exit behaviour profile) for this reason.
 
 **Exploration / exploitation split:**
-- Live agents run the adaptation engine's posterior mean (exploit best known config)
-- Paper agents run samples from the posterior tails (explore config space)
+- Live agents exploit the current best-known config, updated via adaptation engine
+- Paper agents explore PARAM_SPACE regions not yet tried with real capital, feeding the meta-adapt mechanism
 
 Config updates from the adaptation engine are hot-reloaded. A backup is written before every change. All configs are versioned and tagged on every logged event.
+
+**Config reload:** Hot-reload is via `fs.watch` on each config file. On macOS, atomic file writes (write-to-temp + rename) trigger a `rename` event rather than `change`, which the watcher filters out. For manual config updates, use `POST /config/:id` via the REST API to ensure the running engine receives the new config immediately.
 
 ---
 
@@ -258,20 +286,37 @@ Append-only structured log. The single source of truth for the entire system. No
 
 Reads from the Event Store. Writes updated configs back to the agent pool.
 
-**Trigger:** Every N EXIT events for a given agent (default N=10), re-estimate the optimal config for that agent. N is regime-conditioned: for regime-specific parameters, require N exits where the relevant regime probability was > 0.7 before updating that parameter.
+**Trigger:** Every N effective EXIT events for a given agent (default N=5), re-estimate the optimal config for that agent. Paper exits count as 0.7× (PAPER_DISCOUNT) to account for fill model imprecision.
 
 **Reward signal:** Expectancy per round:
 ```
-reward = (win_rate × avg_win_pct − loss_rate × avg_loss_pct) / avg_holding_rounds
+reward = weighted_avg(pnl_pct) / weighted_avg(holding_rounds)
 ```
 
-This penalises holding losers longer than winners and rewards fast, clean exits. It is computed on a rolling exponentially-weighted window — recent trades count more than old ones.
+Exponentially decay-weighted (EXP_DECAY=0.9) so recent trades count more. This penalises holding losers longer than winners and rewards fast, clean exits.
 
-**Update method:** For each parameter dimension independently, maintain a posterior estimate of expected reward at different settings. Update posteriors based on observed reward from trades taken at that parameter value. Apply the posterior mean as the new config value. Step size is bounded — no parameter moves more than one step per update cycle, and cannot be updated again for M trades (cooldown).
+**Update method (Thompson Sampling):** For each parameter, maintain a Gaussian posterior over expected reward delta. At each cycle, sample from the posterior — if the sample is positive, nudge the parameter up by one step; if negative, nudge down; if near zero, skip. Step size is bounded per parameter. A parameter cannot be updated again for COOLDOWN_N cycles after a change.
 
-Paper agent outcomes feed the same posteriors with a discounting factor (default 0.7×) to account for fill model imprecision. This allows the engine to learn from paper trades before committing live capital to unexplored config regions.
+**Posterior reset:** If the same direction is sampled for RESET_STREAK=3 consecutive cycles on a given parameter, the posterior is wiped and reset to the prior. This prevents stale evidence from locking the system into a config that was optimal under old conditions.
 
-**Posterior reset:** If the proposed config moves in the same direction across 3 consecutive update cycles, this signals a structural market shift rather than noise. The engine wipes the posterior for affected parameters and restarts from the prior. This prevents stale evidence from locking the system into a config that was optimal under old market conditions.
+**Meta-adapt (paper → live promotion):** Every META_EVERY_N=3 poll cycles, the engine scores all agents by recent reward. When a paper agent consistently outperforms a live agent by META_MIN_DELTA=0.002 AND holds a meaningfully different value for a given PARAM_SPACE parameter, the live agent's config is stepped one step toward the paper agent's value. Requires META_STABILITY=2 consecutive meta cycles of the same winner before firing.
+
+**PARAM_SPACE coverage and mode coherence:** The 26-parameter PARAM_SPACE was designed for standard-mode agents. For `trend_follow_mode` agents, 11 of these 26 parameters have no effect on behaviour at runtime:
+
+```
+No effect in TF mode:
+  entry.buy_signal_per_regime.*  — TF bypasses composite score entirely
+  entry.cvd_buy_min              — TF uses cvd_1c gate instead
+  entry.funding_buy_max          — TF has no funding gate
+  exit.sell_signal               — TF uses macro_exit not signal exit
+  exit.cvd_sell_max              — same reason
+```
+
+This means the adaptation engine wastes cycles tuning these parameters for TF agents (any correlation with reward is spurious), and meta-adapt promotions of these values from a standard-mode paper agent to a TF live agent have no effect. The 15 cross-cutting parameters (signal weights, stop/TP, sizing, deadweight, Kelly) transfer validly across modes.
+
+**Known gap:** TF-specific gate parameters (`trend_follow_macro_min`, `trend_follow_ranging_max`, `trend_follow_regime_min`, etc.) are not in PARAM_SPACE and therefore cannot be tuned by the adaptation engine. These are the most impactful levers for TF agents. Adding them to PARAM_SPACE is the correct structural fix.
+
+Paper agent outcomes feed the same posteriors with a discounting factor (default 0.7×). This allows the engine to learn from paper trades before committing live capital to unexplored config regions.
 
 ---
 
@@ -461,7 +506,7 @@ The TUI follows the same architectural pattern as v1 — `blessed` panes wired t
 
 `performance.js` — Dual sparkline: live agent average expectancy vs BTC buy-and-hold, both rolling over the last 50 exits. Summary stats below: expectancy, Sharpe, max drawdown.
 
-`log.js` — Scrollable event stream. Colour-coded: entries (green), exits (yellow for profit, red for loss), config updates (cyan), news events (magenta), rejected signals (dim white).
+`log.js` — Scrollable event stream. Colour-coded: entries (green for live, grey for paper), exits (yellow for profit, red for loss), config updates (cyan/magenta for meta-adapt), news events, rejected signals (dim). Tabbed by agent (All / A1–A6 / Adapt / News). Entry and exit lines include the execution price (`@price`) for immediate context.
 
 `controls.js` — Status bar at bottom. Mode toggle (Live/Replay), replay speed control, pause. In Replay mode, shows current replay timestamp and speed multiplier.
 

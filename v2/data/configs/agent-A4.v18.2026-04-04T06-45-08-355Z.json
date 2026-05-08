@@ -1,0 +1,58 @@
+{
+  "version": 18,
+  "config": {
+    "weights": {
+      "cvd_norm": 0.2,
+      "funding_signal": 0.12,
+      "momentum_1h": 0.16,
+      "momentum_4h": 0.24,
+      "rsi_norm": 0.16,
+      "volume_zscore": 0.14,
+      "fear_greed_signal": 0.1,
+      "news_signal": 0.04
+    },
+    "entry": {
+      "buy_signal_base": 0.15,
+      "buy_signal_per_regime": {
+        "volatile": 0.4,
+        "trending_up": 0.36,
+        "trending_down": 0.2,
+        "ranging": 0.25
+      },
+      "cvd_buy_min": 0,
+      "funding_buy_max": 1,
+      "trend_follow_mode": true,
+      "trend_follow_macro_min": 0.6,
+      "trend_follow_down_max": 0.3,
+      "trend_follow_cvd1c_max": 0,
+      "trend_follow_regime_min": 0.5,
+      "trend_follow_mom1h_min": 0.5,
+      "trend_follow_ranging_max": 0.35
+    },
+    "exit": {
+      "sell_signal": -0.26,
+      "cvd_sell_max": -0.44,
+      "sell_loss_pct_base": 3,
+      "sell_loss_pct_trending_down": 2.5,
+      "sell_profit_pct": 12,
+      "take_profit_requires_cvd_turn": false,
+      "trend_follow_macro_exit": 0.45
+    },
+    "sizing": {
+      "buy_size_pct_base": 0.09,
+      "max_positions": 2,
+      "cash_min_pct": 0.1
+    },
+    "hold": {
+      "deadweight_rounds_min": 12,
+      "deadweight_pnl_threshold": 1.5,
+      "min_hold_rounds": 4,
+      "min_signal_hold_rounds": 999
+    },
+    "kelly": {
+      "kelly_min_trades": 3,
+      "kelly_cap_multiplier": 2
+    }
+  },
+  "reason": "adapt cycle: 22 param(s) updated"
+}

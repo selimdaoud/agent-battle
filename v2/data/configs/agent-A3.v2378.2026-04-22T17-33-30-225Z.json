@@ -1,0 +1,58 @@
+{
+  "version": 2378,
+  "config": {
+    "weights": {
+      "cvd_norm": 0.16,
+      "funding_signal": 0.3,
+      "momentum_1h": 0.1,
+      "momentum_4h": 0.27,
+      "rsi_norm": 0.12,
+      "volume_zscore": 0.1,
+      "fear_greed_signal": 0.04,
+      "news_signal": 0.14
+    },
+    "entry": {
+      "buy_signal_base": 0.15,
+      "buy_signal_per_regime": {
+        "volatile": 0.25,
+        "trending_up": 0.16,
+        "trending_down": 0.4,
+        "ranging": 0.3
+      },
+      "cvd_buy_min": 0.05,
+      "funding_buy_max": 0.45,
+      "spot_accum_mode": true,
+      "spot_accum_price_ceiling": 69000,
+      "spot_accum_macro_min": 0.3,
+      "spot_accum_macro_low_threshold": 0.2,
+      "spot_accum_dip_min_pct": 8,
+      "spot_accum_atr_min_pct": 0.5
+    },
+    "exit": {
+      "sell_signal": -0.28,
+      "cvd_sell_max": -0.51,
+      "sell_loss_pct_base": 12,
+      "sell_loss_pct_trending_down": 7.5,
+      "sell_profit_pct": 25,
+      "take_profit_requires_cvd_turn": true,
+      "trend_follow_macro_exit": 0.45
+    },
+    "sizing": {
+      "buy_size_pct_base": 0.4,
+      "max_positions": 1,
+      "cash_min_pct": 0.1,
+      "spot_accum_size_pct": 0.2
+    },
+    "hold": {
+      "deadweight_rounds_min": 19,
+      "deadweight_pnl_threshold": 8,
+      "min_hold_rounds": 4,
+      "min_signal_hold_rounds": 9999
+    },
+    "kelly": {
+      "kelly_min_trades": 14,
+      "kelly_cap_multiplier": 4
+    }
+  },
+  "reason": "meta-adapt: promoted from A4"
+}

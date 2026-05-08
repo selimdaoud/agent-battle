@@ -222,6 +222,26 @@ async function computeSignals(prices, priceHistories, opts = {}) {
   const btcCloses4h = btcCloses.filter((_, i) => i % 4 === 0)
   const macroRegime = classifyRegime(btcCloses4h, '4h')
 
+  // ── BTC rolling-high dip (shared signal, used by spot_accum gate) ──────────
+  // lookback = 672 bars = 7 days at 15m; uses whatever history is available
+  const BTC_HIGH_LOOKBACK = 672
+  const btcHighWindow = btcCloses.slice(-BTC_HIGH_LOOKBACK)
+  const btcRollingHigh = btcHighWindow.length > 0 ? Math.max(...btcHighWindow) : null
+  const btcCurrentPrice = btcCloses.length > 0 ? btcCloses[btcCloses.length - 1] : null
+  const btcDipPct = (btcRollingHigh && btcCurrentPrice)
+    ? (btcCurrentPrice - btcRollingHigh) / btcRollingHigh * 100
+    : 0
+
+  // ── BTC 4h ATR % (shared signal, used by spot_accum gate) ──────────────────
+  // Average absolute % move per 4h bar over last 28 bars (= 7 days)
+  const BTC_ATR_LOOKBACK = 28
+  const btcAtr4hPct = (() => {
+    const bars = btcCloses4h.slice(-BTC_ATR_LOOKBACK - 1)
+    if (bars.length < 2) return 0
+    const moves = bars.slice(1).map((p, i) => Math.abs(p - bars[i]) / bars[i] * 100)
+    return moves.reduce((s, v) => s + v, 0) / moves.length
+  })()
+
   // ── Per-pair computation ────────────────────────────────────────────────────
   const results = []
 
@@ -298,7 +318,11 @@ async function computeSignals(prices, priceHistories, opts = {}) {
       macro_p_volatile:      macroRegime.p_volatile,
       macro_p_trending_up:   macroRegime.p_trending_up,
       macro_p_trending_down: macroRegime.p_trending_down,
-      macro_p_ranging:       macroRegime.p_ranging
+      macro_p_ranging:       macroRegime.p_ranging,
+      // BTC rolling-high dip % (negative = below high; 0 = at/above high)
+      btc_dip_pct:           btcDipPct,
+      // BTC 4h ATR as % of price (avg abs move per 4h bar, last 7 days)
+      btc_atr_4h_pct:        btcAtr4hPct
     })
   }
 

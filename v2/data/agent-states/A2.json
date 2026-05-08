@@ -1,5 +1,5 @@
 {
-  "capital": 5032.192604909323,
+  "capital": 4855.294980322874,
   "positions": {},
   "tradeHistory": {
     "XLMUSDT": [
@@ -14,18 +14,70 @@
       {
         "win": false,
         "pnl_pct": -0.6916
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.474
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.7717
+      },
+      {
+        "win": true,
+        "pnl_pct": 0.7
+      },
+      {
+        "win": true,
+        "pnl_pct": 2.1669
+      },
+      {
+        "win": true,
+        "pnl_pct": 3.0712
+      },
+      {
+        "win": true,
+        "pnl_pct": 0.8949
       }
     ],
     "SOLUSDT": [
       {
         "win": false,
         "pnl_pct": -0.1686
+      },
+      {
+        "win": true,
+        "pnl_pct": 1.4409
+      },
+      {
+        "win": true,
+        "pnl_pct": 0.773
+      },
+      {
+        "win": false,
+        "pnl_pct": -2.3254
+      },
+      {
+        "win": true,
+        "pnl_pct": 0.4998
       }
     ],
     "BTCUSDT": [
       {
         "win": false,
         "pnl_pct": -0.3399
+      },
+      {
+        "win": false,
+        "pnl_pct": -1.1966
+      },
+      {
+        "win": true,
+        "pnl_pct": 2.9335
+      },
+      {
+        "win": true,
+        "pnl_pct": 1.396
       }
     ],
     "MATICUSDT": [
@@ -46,12 +98,40 @@
       {
         "win": false,
         "pnl_pct": -0.2436
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.1229
+      },
+      {
+        "win": false,
+        "pnl_pct": -1.1705
+      },
+      {
+        "win": false,
+        "pnl_pct": -1.1679
+      },
+      {
+        "win": true,
+        "pnl_pct": 0.4286
       }
     ],
     "DOTUSDT": [
       {
         "win": false,
         "pnl_pct": -1.0862
+      },
+      {
+        "win": true,
+        "pnl_pct": 0.7825
+      },
+      {
+        "win": false,
+        "pnl_pct": -1.2438
+      },
+      {
+        "win": true,
+        "pnl_pct": 0.3479
       }
     ],
     "LTCUSDT": [
@@ -64,14 +144,106 @@
       {
         "win": true,
         "pnl_pct": 0.7656
+      },
+      {
+        "win": false,
+        "pnl_pct": -3.1386
       }
     ],
     "ADAUSDT": [
       {
         "win": true,
         "pnl_pct": 2.3391
+      },
+      {
+        "win": true,
+        "pnl_pct": 2.0897
+      },
+      {
+        "win": false,
+        "pnl_pct": -1.7456
+      },
+      {
+        "win": false,
+        "pnl_pct": -2.8799
+      }
+    ],
+    "AVAXUSDT": [
+      {
+        "win": false,
+        "pnl_pct": -0.1861
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.6344
+      },
+      {
+        "win": false,
+        "pnl_pct": -1.0698
+      }
+    ],
+    "DOGEUSDT": [
+      {
+        "win": false,
+        "pnl_pct": -0.1708
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.3875
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.3234
+      }
+    ],
+    "LINKUSDT": [
+      {
+        "win": true,
+        "pnl_pct": 1.4155
+      },
+      {
+        "win": true,
+        "pnl_pct": 3.7831
+      },
+      {
+        "win": true,
+        "pnl_pct": 0.1248
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.7269
+      },
+      {
+        "win": false,
+        "pnl_pct": -3.069
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.4082
+      }
+    ],
+    "XRPUSDT": [
+      {
+        "win": false,
+        "pnl_pct": -0.7747
+      }
+    ],
+    "ETHUSDT": [
+      {
+        "win": false,
+        "pnl_pct": -0.8791
+      },
+      {
+        "win": false,
+        "pnl_pct": -2.1758
+      },
+      {
+        "win": false,
+        "pnl_pct": -2.2858
       }
     ]
   },
-  "tickCount": 138
+  "tickCount": 2806,
+  "spotAccumMacroWasLow": false,
+  "spotAccumMacroDepth": 1
 }

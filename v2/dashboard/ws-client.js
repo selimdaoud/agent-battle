@@ -27,6 +27,9 @@ function connect(host, port, token, handlers) {
       case 'adapt_result':     handlers.onAdaptResult  && handlers.onAdaptResult(data);  break
       case 'adapt_reset_done': handlers.onAdaptReset   && handlers.onAdaptReset(data);   break
       case 'dxy_update':       handlers.onDxyUpdate    && handlers.onDxyUpdate(data);    break
+      case 'manual_buy_result':  handlers.onManualBuyResult  && handlers.onManualBuyResult(data);  break
+      case 'manual_sell_result':         handlers.onManualSellResult        && handlers.onManualSellResult(data);        break
+      case 'manual_toggle_block_result': handlers.onManualToggleBlockResult && handlers.onManualToggleBlockResult(data); break
     }
   }
 

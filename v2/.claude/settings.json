@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bash restart-engine.sh)",
+      "Bash(sqlite3 /Users/sdaoud/CODE/agent-battle-gpt/v2/data/events.db ' *)",
+      "Bash(sqlite3 /Users/sdaoud/CODE/agent-battle-gpt/v2/data/events.db \"SELECT timestamp, pair, p_trending_up, macro_p_trending_up FROM ticks WHERE pair='BTCUSDT' ORDER BY timestamp DESC LIMIT 5;\")",
+      "Bash(sqlite3 /Users/sdaoud/CODE/agent-battle-gpt/v2/data/events.db \"SELECT mid, timestamp FROM ticks WHERE pair='BTCUSDT' ORDER BY timestamp DESC LIMIT 1;\")",
+      "Bash(pkill -f \"node dashboard/tui.js\")"
+    ]
+  }
+}

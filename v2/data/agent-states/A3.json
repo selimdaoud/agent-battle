@@ -1,6 +1,25 @@
 {
-  "capital": 4995.10633201732,
-  "positions": {},
+  "capital": 3176.9099581213177,
+  "positions": {
+    "BTCUSDT_1775642857755": {
+      "pair": "BTCUSDT",
+      "entryPrice": 71794.67070999999,
+      "sizeUsd": 1000,
+      "entryScore": 0,
+      "entryTick": 993,
+      "entryRegime": "manual",
+      "blocked": true
+    },
+    "BTCUSDT_1778229447138": {
+      "pair": "BTCUSDT",
+      "entryPrice": 79873.901405,
+      "sizeUsd": 1000,
+      "entryScore": 0,
+      "entryTick": 2601,
+      "entryRegime": "manual",
+      "blocked": true
+    }
+  },
   "tradeHistory": {
     "UNIUSDT": [
       {
@@ -28,8 +47,50 @@
       {
         "win": false,
         "pnl_pct": -0.5976
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.2904
+      },
+      {
+        "win": true,
+        "pnl_pct": 0.3768
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.1845
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.5892
+      },
+      {
+        "win": false,
+        "pnl_pct": -2.2743
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.7223
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.3123
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.0902
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.394
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.2872
       }
     ]
   },
-  "tickCount": 82
+  "tickCount": 2608,
+  "spotAccumMacroWasLow": true,
+  "spotAccumMacroDepth": 0
 }

@@ -200,12 +200,74 @@ Notes:
 
 AGENT ARCHETYPES
 ----------------
-  A1  balanced     — equal weight across all signals, moderate thresholds
-  A2  momentum     — high momentum_1h/4h weight, loose CVD gate, lower thresholds
-  A3  flow         — high CVD/funding weight, strict CVD gate, more positions allowed
-  A4  contrarian   — high RSI/fear-greed weight, buys dips, longer hold period
-  A5  aggressive   — lowest entry thresholds, larger position size, fast exit
-  A6  conservative — highest thresholds, small sizing, high cash reserve
+  A1  balanced     — trend-follow, equal weight across all signals, moderate thresholds
+  A2  momentum     — trend-follow, high momentum_1h/4h weight, higher take-profit target
+  A3  spot_accum   — buys BTC dip when macro recovers from capitulation (20% allocation)
+  A4  conservative — trend-follow, tight stop loss (3.5%), high cash reserve
+  A5  standard     — trend-follow, balanced stops, 15% take-profit
+  A6  standard     — trend-follow, higher cash reserve (20%), 15% take-profit
+
+
+GATES
+-----
+Gates are evaluated in sequence — first failure stops evaluation for that pair/tick.
+
+A1  (trend_follow)
+  Entry:
+    TF-1  tf_macro          macro_p_trending_up >= 0.60
+    TF-2  tf_regime_down    p_trending_down     <= 0.30
+    TF-2b tf_ranging         p_ranging           <= 0.35   (block choppy/directionless markets)
+    TF-3  tf_cvd1c_dip      cvd_1c              <= 0.00   (per-candle selling pressure)
+    TF-4  tf_regime_15m     p_trending_up       >= 0.50
+    TF-6  tf_mom1h_min      momentum_1h         >= 0.50
+    G4    max_positions      open positions      <  2
+    G5    cash_min           cash %              >= 14%
+  Exit:
+    stop_loss                pnl <= -5.5%  (-3.0% when trending_down)
+    take_profit              pnl >= 12%
+    macro_exit               macro_p_trending_up < 0.45
+
+A2  (trend_follow)
+  Entry:  identical gates to A1
+  Exit:
+    stop_loss                pnl <= -4.5%  (-5.5% when trending_down)
+    take_profit              pnl >= 17%
+    macro_exit               macro_p_trending_up < 0.45
+
+A3  (spot_accum — BTCUSDT only)
+  Entry:
+    1     sa_price_ceiling   BTC price           <= $69,000
+    2     sa_macro_was_low   macro was below 20% at some point (capitulation confirmed)
+    3     sa_macro_min       macro_p_trending_up >= 0.30
+    4     sa_macro_rising    macro_p_trending_up >  previous tick value
+    G4    max_positions      open positions      <  1
+    G5    cash_min           cash %              >= 10%
+  Exit:
+    stop_loss                pnl <= -5.5%
+    take_profit              pnl >= 12%
+    macro_exit               macro_p_trending_up < 0.45
+  Note: after entry, sa_macro_was_low resets — no re-entry on same dip.
+
+A4  (trend_follow)
+  Entry:  identical gates to A1, except cash_min >= 22%
+  Exit:
+    stop_loss                pnl <= -3.5%  (-5.5% when trending_down)
+    take_profit              pnl >= 17%
+    macro_exit               macro_p_trending_up < 0.45
+
+A5  (trend_follow)
+  Entry:  identical gates to A1, except cash_min >= 14%
+  Exit:
+    stop_loss                pnl <= -4.5%  (-5.0% when trending_down)
+    take_profit              pnl >= 15%
+    macro_exit               macro_p_trending_up < 0.45
+
+A6  (trend_follow)
+  Entry:  identical gates to A1, except cash_min >= 20%
+  Exit:
+    stop_loss                pnl <= -5.0%
+    take_profit              pnl >= 15%
+    macro_exit               macro_p_trending_up < 0.45
 
 
 AGENT STATE PERSISTENCE

@@ -25,10 +25,11 @@ const SCHEMA = `
     fear_greed_signal REAL,
     signal_uncertainty REAL,
     news_signal      REAL DEFAULT 0,
-    p_volatile       REAL,
-    p_trending_up    REAL,
-    p_trending_down  REAL,
-    p_ranging        REAL
+    p_volatile           REAL,
+    p_trending_up        REAL,
+    p_trending_down      REAL,
+    p_ranging            REAL,
+    macro_p_trending_up  REAL
   );
 
   CREATE TABLE IF NOT EXISTS entries (
@@ -118,12 +119,12 @@ const INSERTS = {
     (timestamp, pair, mid, bid, ask, spread, volume, funding_rate, fear_greed,
      cvd_norm, funding_signal, momentum_1h, momentum_4h, rsi_norm, volume_zscore,
      fear_greed_signal, signal_uncertainty, news_signal,
-     p_volatile, p_trending_up, p_trending_down, p_ranging)
+     p_volatile, p_trending_up, p_trending_down, p_ranging, macro_p_trending_up)
     VALUES
     (@timestamp, @pair, @mid, @bid, @ask, @spread, @volume, @funding_rate, @fear_greed,
      @cvd_norm, @funding_signal, @momentum_1h, @momentum_4h, @rsi_norm, @volume_zscore,
      @fear_greed_signal, @signal_uncertainty, @news_signal,
-     @p_volatile, @p_trending_up, @p_trending_down, @p_ranging)`,
+     @p_volatile, @p_trending_up, @p_trending_down, @p_ranging, @macro_p_trending_up)`,
 
   entries: `INSERT INTO entries
     (timestamp, agent_id, mode, pair, price, size_usd, entry_score,
@@ -170,6 +171,8 @@ class EventStore {
     this.db.pragma('journal_mode = WAL')  // concurrent reads while writing
     this.db.pragma('synchronous = NORMAL')
     this.db.exec(SCHEMA)
+    // Migration: add macro_p_trending_up column to ticks if it doesn't exist yet
+    try { this.db.exec('ALTER TABLE ticks ADD COLUMN macro_p_trending_up REAL') } catch (_) {}
 
     // Pre-compile all insert statements
     this._stmts = {}

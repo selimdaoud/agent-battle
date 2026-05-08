@@ -12,6 +12,7 @@ const EventStore   = require('./core/event-store')
 const { computeSignals, fetchHistoricalCloses } = require('./core/signals')
 const AggTradeCollector = require('./core/agg-trade-collector')
 const { ConfigStore } = require('./core/config-store')
+const { simEntry, simExit } = require('./core/executor')
 const Agent               = require('./core/agent')
 const NewsSignal          = require('./core/news-signal')
 const { AdaptationEngine }    = require('./core/adaptation-engine')
@@ -73,7 +74,7 @@ let aggTradeCollector = null
 let adaptationEngine  = null
 const perfTracker     = new PerformanceTracker('./data')
 
-// priceHistories[pair] = array of closes, oldest first, max 200 entries
+// priceHistories[pair] = array of closes, oldest first, max 700 entries (~7 days at 15m)
 const priceHistories = Object.fromEntries(PAIRS.map(p => [p, []]))
 
 // signalBuffers[pair] = last 10 signal vectors for uncertainty computation
@@ -116,7 +117,7 @@ async function fetchPricesSafe() {
 function pushClose(pair, price) {
   const h = priceHistories[pair]
   h.push(price)
-  if (h.length > 200) h.shift()
+  if (h.length > 700) h.shift()
 }
 
 async function onCandleClose(prices, timestamp) {
@@ -170,10 +171,11 @@ async function onCandleClose(prices, timestamp) {
     fear_greed_signal: sv.fear_greed_signal,
     signal_uncertainty: sv.signal_uncertainty,
     news_signal:       sv.news_signal ?? 0,
-    p_volatile:        sv.p_volatile,
-    p_trending_up:     sv.p_trending_up,
-    p_trending_down:   sv.p_trending_down,
-    p_ranging:         sv.p_ranging
+    p_volatile:           sv.p_volatile,
+    p_trending_up:        sv.p_trending_up,
+    p_trending_down:      sv.p_trending_down,
+    p_ranging:            sv.p_ranging,
+    macro_p_trending_up:  sv.macro_p_trending_up
   }))
 
   store.appendBatch(tickEvents)
@@ -202,7 +204,7 @@ async function onCandleClose(prices, timestamp) {
             p_ranging:      action.regimeProbs.p_ranging,
             config_version: action.configVersion
           })
-          log(`${agent.id}(${agent.mode}) ENTRY  ${action.pair}  $${action.size_usd.toFixed(0)}  score=${action.signal_score.toFixed(3)}  cfg=v${action.configVersion}`)
+          log(`${agent.id}(${agent.mode}) ENTRY  ${action.pair}  @${action.fill.price.toFixed(4)}  $${action.size_usd.toFixed(0)}  score=${action.signal_score.toFixed(3)}  cfg=v${action.configVersion}`)
 
         } else if (action.type === 'EXIT') {
           const exitEvent = {
@@ -225,7 +227,7 @@ async function onCandleClose(prices, timestamp) {
           agentEvents.push(exitEvent)
           perfTracker.onExit(exitEvent)
           const sign = action.pnl_pct >= 0 ? '+' : ''
-          log(`${agent.id}(${agent.mode}) EXIT   ${action.pair}  ${sign}${action.pnl_pct.toFixed(2)}%  reason=${action.exit_reason}  held=${action.holding_rounds}r`)
+          log(`${agent.id}(${agent.mode}) EXIT   ${action.pair}  @${action.fill.price.toFixed(4)}  ${sign}${action.pnl_pct.toFixed(2)}%  reason=${action.exit_reason}  held=${action.holding_rounds}r`)
 
         } else if (action.type === 'REJECTED') {
           agentEvents.push({
@@ -282,7 +284,7 @@ function runIntraStops(prices) {
         p_ranging:       action.regimeProbs?.p_ranging       ?? 0,
         config_version:  action.configVersion
       })
-      log(`${agent.id}(${agent.mode}) STOP(intra)  ${action.pair}  ${action.pnl_pct.toFixed(2)}%`)
+      log(`${agent.id}(${agent.mode}) STOP(intra)  ${action.pair}  @${action.fill.price.toFixed(4)}  ${action.pnl_pct.toFixed(2)}%`)
     }
   }
   if (events.length) store.appendBatch(events)
@@ -322,17 +324,23 @@ async function runTick() {
 
 const STATES_DIR = './data/agent-states'
 
-function saveAgentStates() {
+function saveOneAgentState(agent) {
   if (!fs.existsSync(STATES_DIR)) fs.mkdirSync(STATES_DIR, { recursive: true })
+  const file = path.join(STATES_DIR, `${agent.id}.json`)
+  fs.writeFileSync(file, JSON.stringify({
+    capital:               agent.capital,
+    positions:             agent.positions,
+    tradeHistory:          agent.tradeHistory,
+    tickCount:             agent.tickCount,
+    spotAccumMacroWasLow:  agent.spotAccumMacroWasLow,
+    spotAccumMacroDepth:   agent.spotAccumMacroDepth
+  }, null, 2))
+}
+
+function saveAgentStates() {
   for (const agent of agentPool) {
     if (agent.mode === 'paper') continue  // paper agents always reset on restart
-    const file = path.join(STATES_DIR, `${agent.id}.json`)
-    fs.writeFileSync(file, JSON.stringify({
-      capital:      agent.capital,
-      positions:    agent.positions,
-      tradeHistory: agent.tradeHistory,
-      tickCount:    agent.tickCount
-    }, null, 2))
+    saveOneAgentState(agent)
   }
 }
 
@@ -341,10 +349,12 @@ function loadAgentState(agent) {
   if (!fs.existsSync(file)) return
   try {
     const state = JSON.parse(fs.readFileSync(file, 'utf8'))
-    agent.capital       = state.capital       ?? agent.capital
-    agent.positions     = state.positions     ?? {}
-    agent.tradeHistory  = state.tradeHistory  ?? {}
-    agent.tickCount     = state.tickCount     ?? 0
+    agent.capital              = state.capital              ?? agent.capital
+    agent.positions            = state.positions            ?? {}
+    agent.tradeHistory         = state.tradeHistory         ?? {}
+    agent.tickCount            = state.tickCount            ?? 0
+    agent.spotAccumMacroWasLow = state.spotAccumMacroWasLow ?? false
+    agent.spotAccumMacroDepth  = state.spotAccumMacroDepth  ?? 1.0
     const posCount = Object.keys(agent.positions).length
     log(`state loaded  agent=${agent.id}  capital=$${agent.capital.toFixed(0)}  positions=${posCount}`)
   } catch (err) {
@@ -495,11 +505,133 @@ wss.on('connection', (ws, request) => {
         require('fs').writeFileSync(MACRO_SIGNAL_FILE, JSON.stringify(macroSignal, null, 2))
         log(`trading_paused set to ${macroSignal.trading_paused} by TUI`)
         broadcast({ type: 'dxy_update', macroSignal })
+      } else if (msg.type === 'manual_sell') {
+        const { agent_id, posId } = msg
+        const agent = agentPool.find(a => a.id === agent_id)
+        const reply = (ok, extra) => ws.send(JSON.stringify({ type: 'manual_sell_result', ok, agent_id, posId, ...extra }))
+
+        if (!agent)               { reply(false, { error: `agent ${agent_id} not found` }); return }
+        const pos = agent.positions[posId]
+        if (!pos)                 { reply(false, { error: `position ${posId} introuvable` }); return }
+
+        const pair     = pos.pair || posId
+        const priceArr = priceHistories[pair]
+        const mid = priceArr && priceArr.length ? priceArr[priceArr.length - 1] : null
+        if (!mid)                 { reply(false, { error: `pas de prix pour ${pair}` }); return }
+
+        const fill = simExit(pos.entryPrice, mid, pos.sizeUsd)
+        agent.capital += pos.sizeUsd + fill.pnl_usd - fill.fee_usd
+        delete agent.positions[posId]
+
+        const timestamp = Date.now()
+        const exitEvent = {
+          type: 'exit', timestamp,
+          agent_id: agent.id, mode: agent.mode, pair,
+          exit_price:     fill.price,
+          exit_reason:    'manual',
+          holding_rounds: agent.tickCount - pos.entryTick,
+          pnl_pct:        fill.pnl_pct,
+          entry_score:    pos.entryScore || 0,
+          p_volatile: 0, p_trending_up: 0, p_trending_down: 0, p_ranging: 0,
+          config_version: agent.configVersion
+        }
+        store.append(exitEvent)
+        perfTracker.onExit(exitEvent)
+        const sign = fill.pnl_pct >= 0 ? '+' : ''
+        log(`${agent.id} MANUAL_SELL  ${pair}  @${fill.price.toFixed(2)}  ${sign}${fill.pnl_pct.toFixed(2)}%`)
+        saveOneAgentState(agent)
+
+        const lastPrices = Object.fromEntries(
+          Object.entries(priceHistories).map(([p, h]) => [p, h.length ? h[h.length - 1] : 0])
+        )
+        broadcast({
+          type:     'manual_sell_result',
+          ok:       true,
+          agent_id: agent.id,
+          pair,
+          price:    fill.price,
+          pnl_pct:  fill.pnl_pct,
+          agents:   agentPool.map(a => a.snapshot(lastPrices))
+        })
+      } else if (msg.type === 'manual_toggle_block') {
+        const { agent_id, posId } = msg
+        const agent = agentPool.find(a => a.id === agent_id)
+        const reply = (ok, extra) => ws.send(JSON.stringify({ type: 'manual_toggle_block_result', ok, agent_id, posId, ...extra }))
+
+        if (!agent)             { reply(false, { error: `agent ${agent_id} not found` }); return }
+        const pos = agent.positions[posId]
+        if (!pos)               { reply(false, { error: `position ${posId} introuvable` }); return }
+
+        const pair = pos.pair || posId
+        pos.blocked = !pos.blocked
+        saveOneAgentState(agent)
+        log(`${agent.id} ${pos.blocked ? 'BLOCK' : 'UNBLOCK'}  ${pair}`)
+
+        const lastPrices = Object.fromEntries(
+          Object.entries(priceHistories).map(([p, h]) => [p, h.length ? h[h.length - 1] : 0])
+        )
+        broadcast({
+          type:     'manual_toggle_block_result',
+          ok:       true,
+          agent_id: agent.id,
+          pair,
+          blocked:  pos.blocked,
+          agents:   agentPool.map(a => a.snapshot(lastPrices))
+        })
       } else if (msg.type === 'adapt_reset') {
         const targets = msg.agent_id ? [msg.agent_id] : configStore.listAgents()
         log(`adapt_reset requested by TUI  targets=${targets.join(',')}`)
         if (adaptationEngine) targets.forEach(id => adaptationEngine.resetAgent(id))
         broadcast({ type: 'adapt_reset_done', agents: targets })
+      } else if (msg.type === 'manual_buy') {
+        const { agent_id, pair, amountUsd } = msg
+        const agent = agentPool.find(a => a.id === agent_id)
+        const reply = (ok, extra) => ws.send(JSON.stringify({ type: 'manual_buy_result', ok, agent_id, pair, ...extra }))
+
+        if (!agent)  { reply(false, { error: `agent ${agent_id} not found` }); return }
+
+        const priceArr = priceHistories[pair]
+        const mid = priceArr && priceArr.length ? priceArr[priceArr.length - 1] : null
+        if (!mid)    { reply(false, { error: `pas de prix pour ${pair}` }); return }
+
+        const sizeUsd = Math.min(amountUsd, agent.capital * 0.99)
+        if (sizeUsd < 1) { reply(false, { error: `capital insuffisant (${agent.capital.toFixed(0)} USD)` }); return }
+
+        const fill  = simEntry(mid, sizeUsd)
+        const posId = `${pair}_${Date.now()}`
+        agent.capital -= sizeUsd
+        agent.positions[posId] = {
+          pair,
+          entryPrice:  fill.price,
+          sizeUsd,
+          entryScore:  0,
+          entryTick:   agent.tickCount,
+          entryRegime: 'manual'
+        }
+
+        const timestamp = Date.now()
+        store.append({
+          type: 'entry', timestamp,
+          agent_id: agent.id, mode: agent.mode, pair,
+          price: fill.price, size_usd: sizeUsd, entry_score: 0,
+          p_volatile: 0, p_trending_up: 0, p_trending_down: 0, p_ranging: 0,
+          config_version: agent.configVersion, manual: true
+        })
+        log(`${agent.id} MANUAL_BUY  ${pair}  @${fill.price.toFixed(2)}  $${sizeUsd.toFixed(0)}`)
+        saveOneAgentState(agent)
+
+        const lastPrices = Object.fromEntries(
+          Object.entries(priceHistories).map(([p, h]) => [p, h.length ? h[h.length - 1] : 0])
+        )
+        broadcast({
+          type:     'manual_buy_result',
+          ok:       true,
+          agent_id: agent.id,
+          pair,
+          price:    fill.price,
+          size_usd: sizeUsd,
+          agents:   agentPool.map(a => a.snapshot(lastPrices))
+        })
       }
     } catch { /* ignore malformed messages */ }
   })

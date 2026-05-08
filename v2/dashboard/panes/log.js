@@ -28,8 +28,9 @@ function create(parent) {
   const _buffers = {}
   for (const t of TABS) _buffers[t] = []
 
-  let _activeTab  = 'All'
-  let _tickCount  = 0
+  let _activeTab   = 'All'
+  let _tickCount   = 0
+  let _rejectBuf   = {}   // agentId → { gateCount: {gate: n}, ts }  — flushed on next candle
 
   function ts(ms) {
     return new Date(ms || Date.now()).toLocaleTimeString('en-GB', { hour12: false })
@@ -85,6 +86,18 @@ function create(parent) {
     },
 
     onCandle(data) {
+      // Flush previous candle's accumulated rejects as one summary line per agent
+      for (const [agentId, info] of Object.entries(_rejectBuf)) {
+        const gates   = Object.entries(info.gateCount)
+          .sort((a, b) => b[1] - a[1])
+          .map(([gate, n]) => `${gate}×${n}`)
+          .join(' ')
+        const total   = Object.values(info.gateCount).reduce((s, n) => s + n, 0)
+        const line    = `{grey-fg}${ts(info.ts)} ${agentId.padEnd(3)} GATE  ${total} blocked — ${gates}{/grey-fg}`
+        push(line, ['All', agentId])
+      }
+      _rejectBuf = {}
+
       push(
         `{cyan-fg}${ts(data.timestamp)} ── candle #${data.candleCount}  ${data.signals?.length || 0} pairs ──{/cyan-fg}`,
         ['All']
@@ -93,9 +106,11 @@ function create(parent) {
 
     onEntry(action) {
       const color = action.mode === 'live' ? '{green-fg}' : '{grey-fg}'
+      const px    = action.price
+      const pxStr = px >= 1000 ? px.toFixed(2) : px >= 1 ? px.toFixed(4) : px.toFixed(5)
       const line  =
         `${ts(action.timestamp)} ${color}{bold}${action.agent_id.padEnd(3)}{/bold} ENTRY  ` +
-        `${action.pair}  $${(action.size_usd || 0).toFixed(0)}  ` +
+        `${action.pair}  @${pxStr}  $${(action.size_usd || 0).toFixed(0)}  ` +
         `score=${(action.entry_score || 0).toFixed(3)}  ` +
         `cfg=v${action.config_version}{/${color.slice(1, -1)}}`
       pushAgent(action.agent_id, line)
@@ -105,19 +120,21 @@ function create(parent) {
       const pnl   = action.pnl_pct || 0
       const color = pnl >= 0 ? '{yellow-fg}' : '{red-fg}'
       const sign  = pnl >= 0 ? '+' : ''
+      const px    = action.exit_price
+      const pxStr = px >= 1000 ? px.toFixed(2) : px >= 1 ? px.toFixed(4) : px.toFixed(5)
       const line  =
         `${ts(action.timestamp)} ${color}{bold}${action.agent_id.padEnd(3)}{/bold} EXIT   ` +
-        `${action.pair}  ${sign}${pnl.toFixed(2)}%  ` +
+        `${action.pair}  @${pxStr}  ${sign}${pnl.toFixed(2)}%  ` +
         `reason=${action.exit_reason}  held=${action.holding_rounds}r  ` +
         `cfg=v${action.config_version}{/${color.slice(1, -1)}}`
       pushAgent(action.agent_id, line)
     },
 
     onRejected(action) {
-      const line =
-        `{grey-fg}${ts(action.timestamp)} ${action.agent_id.padEnd(3)} REJECT ` +
-        `${action.pair}  gate=${action.gate_failed}  score=${(action.signal_score || 0).toFixed(3)}{/grey-fg}`
-      pushAgent(action.agent_id, line)
+      const id = action.agent_id
+      if (!_rejectBuf[id]) _rejectBuf[id] = { gateCount: {}, ts: action.timestamp }
+      const gate = action.gate_failed || 'unknown'
+      _rejectBuf[id].gateCount[gate] = (_rejectBuf[id].gateCount[gate] || 0) + 1
     },
 
     onConfigUpdate(event) {

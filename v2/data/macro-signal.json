@@ -1,10 +1,10 @@
 {
-  "dxy": 99.5719985961914,
-  "latestDate": "2026-03-25",
-  "sma10w": 98.4911994934082,
-  "sma20w": 98.65509910583496,
-  "trend": "falling",
-  "advice": "green",
-  "updatedAt": 1774459285582,
+  "dxy": 98.43299865722656,
+  "latestDate": "2026-05-05",
+  "sma10w": 99.05630035400391,
+  "sma20w": 98.5501495361328,
+  "trend": "rising",
+  "advice": "pause",
+  "updatedAt": 1777967284892,
   "trading_paused": false
 }

@@ -11,7 +11,8 @@
     "analyze": "node tools/analyze.js",
     "replay":  "node tools/replay.js",
     "adapt":   "node core/adaptation-engine.js",
-    "optimize": "node tools/optimize.js"
+    "optimize":     "node tools/optimize.js",
+    "analyze-this": "node tools/AnalyzeThis.js"
   },
   "dependencies": {
     "better-sqlite3": "^12.6.2",

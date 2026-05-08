@@ -13,6 +13,8 @@ const performancePane = require('./panes/performance')
 const logPane        = require('./panes/log')
 const controlsPane   = require('./panes/controls')
 
+const marketContext = require('./market-context')
+
 const HOST  = process.env.ABG_HOST  || 'localhost'
 const PORT  = parseInt(process.env.PORT) || 3001
 const TOKEN = process.env.WS_TOKEN  || ''
@@ -269,9 +271,169 @@ function toggleNewsOverlay() {
 
 newsOverlay.key(['escape', 'n', 'N'], () => toggleNewsOverlay())
 
+// ── Macro history overlay ─────────────────────────────────────────────────────
+
+const MACRO_THRESHOLDS = [
+  { val: 0.75, label: 'A2',    color: 'magenta' },
+  { val: 0.70, label: 'A1/A6', color: 'yellow'  },
+  { val: 0.65, label: 'A4',    color: 'cyan'     },
+  { val: 0.60, label: 'A5',    color: 'white'    },
+]
+const CHART_H = 14
+
+let _macroHours = 12
+let _macroTicks = null
+
+const macroHistBox = blessed.box({
+  parent: screen,
+  top: '3%', left: '3%',
+  width: '94%', height: '94%',
+  label: ' MACRO HISTORY  [1] 12h  [2] 24h  [3] 36h  ·  [H/Esc] close ',
+  tags: true, hidden: true,
+  scrollable: true, alwaysScroll: true,
+  keys: true, mouse: true,
+  border: { type: 'line' },
+  style: {
+    bg: 'black', fg: 'white',
+    border: { fg: 'green', bg: 'black' },
+    label:  { fg: 'green', bg: 'black', bold: true },
+    scrollbar: { bg: 'green' }
+  }
+})
+
+function sampleArray(arr, maxLen) {
+  if (arr.length <= maxLen) return arr
+  const step = arr.length / maxLen
+  return Array.from({ length: maxLen }, (_, i) => arr[Math.min(arr.length - 1, Math.round(i * step))])
+}
+
+function renderMacroHistContent() {
+  if (!_macroTicks) { macroHistBox.setContent('{grey-fg}Loading...{/grey-fg}'); return }
+  if (!_macroTicks.length) { macroHistBox.setContent('{grey-fg}No tick data for this window.{/grey-fg}'); return }
+
+  const ticks  = _macroTicks
+  const lines  = []
+  const chartW = Math.max(20, Math.min(ticks.length, 78))
+  const sampled = sampleArray(ticks, chartW)
+
+  const first = new Date(ticks[0].timestamp).toISOString().slice(0, 16).replace('T', ' ')
+  const last  = new Date(ticks[ticks.length - 1].timestamp).toISOString().slice(0, 16).replace('T', ' ')
+  lines.push(`{grey-fg}  ${first}  →  ${last}   (${ticks.length} candles, window=${_macroHours}h){/grey-fg}`)
+  lines.push('')
+
+  // ── Chart ─────────────────────────────────────────────────────────────────
+  for (let row = 0; row <= CHART_H; row++) {
+    const rowVal = 1 - (row / CHART_H)
+    const yLabel = rowVal.toFixed(2).padStart(4)
+
+    // nearest threshold at this row height
+    const thr = MACRO_THRESHOLDS.find(t => Math.abs((1 - t.val) * CHART_H - row) < 0.5)
+
+    let cells = ''
+    for (const tick of sampled) {
+      const macroVal = tick.macro_p_trending_up ?? tick.p_trending_up
+      const fillRow = (1 - macroVal) * CHART_H
+      if (row >= fillRow) {
+        const v = macroVal
+        const c = v >= 0.70 ? 'green' : v >= 0.40 ? 'yellow' : 'red'
+        cells += `{${c}-fg}█{/${c}-fg}`
+      } else if (thr) {
+        cells += `{${thr.color}-fg}╌{/${thr.color}-fg}`
+      } else {
+        cells += ' '
+      }
+    }
+
+    const thrLabel = thr ? `  {${thr.color}-fg}← ${thr.label} (≥${thr.val}){/${thr.color}-fg}` : ''
+    lines.push(`{grey-fg}${yLabel}│{/grey-fg}${cells}${thrLabel}`)
+  }
+
+  // Time axis
+  lines.push('{grey-fg}    └' + '─'.repeat(chartW) + '{/grey-fg}')
+  const pts  = [0, 0.25, 0.5, 0.75, 1].map(f => Math.min(sampled.length - 1, Math.round(f * (sampled.length - 1))))
+  let tAxis  = '     '
+  let prevEnd = 0
+  for (const pos of pts) {
+    const lbl = new Date(sampled[pos].timestamp).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
+    const pad = Math.max(0, pos - prevEnd)
+    tAxis  += ' '.repeat(pad) + lbl
+    prevEnd = pos + lbl.length
+  }
+  lines.push(`{grey-fg}${tAxis}{/grey-fg}`)
+  lines.push('')
+
+  // ── BTC price sparkline ───────────────────────────────────────────────────
+  const prices = sampled.map(t => t.mid).filter(Boolean)
+  if (prices.length) {
+    const spark = (() => {
+      const chars = ' ▁▂▃▄▅▆▇█'
+      const min = Math.min(...prices), max = Math.max(...prices), range = max - min || 1
+      return prices.map(p => chars[Math.round(((p - min) / range) * (chars.length - 1))]).join('')
+    })()
+    const pMin = Math.min(...prices), pMax = Math.max(...prices)
+    lines.push(`{grey-fg} BTC│{/grey-fg}{cyan-fg}${spark}{/cyan-fg}  {grey-fg}$${pMin.toFixed(0)}–$${pMax.toFixed(0)}{/grey-fg}`)
+    lines.push('')
+  }
+
+  // ── Hourly table ──────────────────────────────────────────────────────────
+  lines.push('{cyan-fg}{bold}  Time (UTC)      Macro 4h   Regime           BTC{/bold}{/cyan-fg}')
+  lines.push('{grey-fg}  ' + '─'.repeat(52) + '{/grey-fg}')
+  const step = Math.max(1, Math.floor(ticks.length / 18))
+  for (let i = 0; i < ticks.length; i += step) {
+    const t = ticks[i]
+    const time = new Date(t.timestamp).toISOString().slice(11, 16)
+    const v    = t.macro_p_trending_up ?? t.p_trending_up
+    const regime = v >= 0.70 ? '{green-fg}TREND  ▲{/green-fg}' :
+                   v >= 0.40 ? '{yellow-fg}WEAK   ▲{/yellow-fg}' :
+                                '{red-fg}RANGING ▬{/red-fg}'
+    const px = t.mid ? `$${t.mid.toFixed(0)}` : '—'
+    lines.push(`{grey-fg}  ${time}           {/grey-fg}{white-fg}${v.toFixed(4)}{/white-fg}     ${regime}       {grey-fg}${px}{/grey-fg}`)
+  }
+
+  lines.push('')
+  lines.push('{grey-fg}  [1] 12h  [2] 24h  [3] 36h  ·  [H/Esc] close{/grey-fg}')
+  macroHistBox.setContent(lines.join('\n'))
+  macroHistBox.setScrollPerc(0)
+}
+
+async function fetchAndRenderMacroHist() {
+  _macroTicks = null
+  macroHistBox.setContent(`{grey-fg}Loading last ${_macroHours}h of macro data...{/grey-fg}`)
+  screen.render()
+  try {
+    const from_ts = Date.now() - _macroHours * 3600 * 1000
+    const url     = `${API_BASE}/events?type=tick&pair=BTCUSDT&from_ts=${from_ts}&order=asc&limit=500`
+    const res     = await fetch(url, { signal: AbortSignal.timeout(5000) })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    _macroTicks = await res.json()
+    renderMacroHistContent()
+  } catch (err) {
+    macroHistBox.setContent(`{red-fg}Error loading macro history: ${err.message}{/red-fg}`)
+  }
+  screen.render()
+}
+
+function toggleMacroHistOverlay() {
+  if (macroHistBox.hidden) {
+    macroHistBox.show()
+    macroHistBox.focus()
+    fetchAndRenderMacroHist()
+  } else {
+    macroHistBox.hide()
+    screen.focusPop()
+  }
+  screen.render()
+}
+
+macroHistBox.key(['h', 'H'],  () => toggleMacroHistOverlay())
+macroHistBox.key(['1'], () => { _macroHours = 12; fetchAndRenderMacroHist() })
+macroHistBox.key(['2'], () => { _macroHours = 24; fetchAndRenderMacroHist() })
+macroHistBox.key(['3'], () => { _macroHours = 36; fetchAndRenderMacroHist() })
+
 // ── WebSocket handlers ────────────────────────────────────────────────────────
 
-let _client = null
+let _client     = null
+let _agentsData = []   // dernière snapshot des agents, mise à jour à chaque candle/buy/sell
 
 function buildHandlers() {
   return {
@@ -291,6 +453,7 @@ function buildHandlers() {
       _macroSignal = data.macroSignal
       controls.onDxyUpdate(data.macroSignal)
       if (!dxyOverlay.hidden) renderDxyOverlay()
+      pool.update(_agentsData || [], perf.getBtcReturn(), null, marketContext.get(), _macroSignal)
       screen.render()
     },
 
@@ -302,7 +465,12 @@ function buildHandlers() {
       news.tick()
 
       if (data.signals)     signals.update(data.signals, data.gateTraces || {})
-      if (data.agents)      pool.update(data.agents, perf.getBtcReturn())
+      if (data.agents) {
+        const macroUp = data.signals?.find(s => s.pair === 'BTCUSDT')?.macro_p_trending_up ?? null
+        _agentsData = data.agents
+        marketContext.refresh().catch(() => {})
+        pool.update(data.agents, perf.getBtcReturn(), macroUp, marketContext.get(), _macroSignal)
+      }
       if (data.adaptCounts) adaptation.onCounts(data.adaptCounts)
 
       log.onCandle(data)
@@ -340,6 +508,39 @@ function buildHandlers() {
       _macroSignal = data.macroSignal
       controls.onDxyUpdate(data.macroSignal)
       if (!dxyOverlay.hidden) renderDxyOverlay()
+      pool.update(_agentsData || [], perf.getBtcReturn(), null, marketContext.get(), _macroSignal)
+      screen.render()
+    },
+
+    onManualBuyResult(data) {
+      if (data.ok) {
+        log.append(`{green-fg}✓ A3 acheté ${data.pair}  @${data.price.toFixed(2)}  $${data.size_usd.toFixed(0)}{/green-fg}`)
+        if (data.agents) { _agentsData = data.agents; pool.update(data.agents, perf.getBtcReturn(), null, marketContext.get(), _macroSignal) }
+      } else {
+        log.append(`{red-fg}✗ manual_buy échoué: ${data.error}{/red-fg}`)
+      }
+      screen.render()
+    },
+
+    onManualToggleBlockResult(data) {
+      if (data.ok) {
+        const state = data.blocked ? '{yellow-fg}🔒 bloquée{/yellow-fg}' : '{grey-fg}débloquée{/grey-fg}'
+        log.append(`${state}  A3 ${data.pair}`)
+        if (data.agents) { _agentsData = data.agents; pool.update(data.agents, perf.getBtcReturn(), null, marketContext.get(), _macroSignal) }
+      } else {
+        log.append(`{red-fg}✗ toggle block échoué: ${data.error}{/red-fg}`)
+      }
+      screen.render()
+    },
+
+    onManualSellResult(data) {
+      if (data.ok) {
+        const sign = data.pnl_pct >= 0 ? '+' : ''
+        log.append(`{green-fg}✓ A3 vendu ${data.pair}  @${data.price.toFixed(2)}  ${sign}${data.pnl_pct.toFixed(2)}%{/green-fg}`)
+        if (data.agents) { _agentsData = data.agents; pool.update(data.agents, perf.getBtcReturn(), null, marketContext.get(), _macroSignal) }
+      } else {
+        log.append(`{red-fg}✗ manual_sell échoué: ${data.error}{/red-fg}`)
+      }
       screen.render()
     }
   }
@@ -377,10 +578,168 @@ screen.key('r', () => {
 
 screen.key('n', () => toggleNewsOverlay())
 screen.key('d', () => toggleDxyOverlay())
+screen.key('h', () => toggleMacroHistOverlay())
+
+function openManualBuyPrompt() {
+  const prompt = blessed.prompt({
+    parent: screen,
+    top: 'center', left: 'center',
+    width: '40%', height: 'shrink',
+    label: ' {green-fg}ACHAT — A3 / BTCUSDT{/green-fg} ',
+    tags: true,
+    border: { type: 'line' },
+    style: { bg: 'black', fg: 'white', border: { fg: 'green', bg: 'black' } }
+  })
+  prompt.input('Montant USD :', '', (err, value) => {
+    prompt.destroy()
+    screen.render()
+    if (err || value == null) return
+    const amountUsd = parseFloat(value)
+    if (isNaN(amountUsd) || amountUsd <= 0) {
+      log.append('{red-fg}✗ montant invalide{/red-fg}')
+      screen.render()
+      return
+    }
+    if (_client) _client.send({ type: 'manual_buy', agent_id: 'A3', pair: 'BTCUSDT', amountUsd })
+    log.append(`{yellow-fg}→ manual_buy A3 BTCUSDT $${amountUsd.toFixed(0)} envoyé{/yellow-fg}`)
+    screen.render()
+  })
+}
+
+function openManualSellMenu() {
+  const a3        = _agentsData.find(a => a.id === 'A3')
+  const positions = a3 ? a3.positions : []
+
+  if (!positions.length) {
+    log.append('{yellow-fg}A3 n\'a pas de position ouverte{/yellow-fg}')
+    screen.render()
+    return
+  }
+
+  const items = [
+    ...positions.map(p => {
+      const sign = p.unrealisedPct >= 0 ? '+' : ''
+      return `  ${p.pair.padEnd(10)} $${p.sizeUsd.toFixed(0).padStart(7)}  ${sign}${p.unrealisedPct.toFixed(2)}%`
+    }),
+    '  ─ Annuler'
+  ]
+
+  const list = blessed.list({
+    parent: screen,
+    top: 'center', left: 'center',
+    width: 46, height: items.length + 4,
+    label: ' {red-fg}VENTE MANUELLE — A3{/red-fg} ',
+    tags: true,
+    border: { type: 'line' },
+    keys: true, vi: true,
+    style: {
+      bg: 'black', fg: 'white',
+      border: { fg: 'red', bg: 'black' },
+      selected: { bg: 'red', fg: 'white', bold: true }
+    },
+    items
+  })
+  list.focus()
+  screen.render()
+
+  list.on('select', (_item, index) => {
+    list.destroy()
+    screen.render()
+    if (index >= positions.length) return   // Annuler
+    const { posId, pair } = positions[index]
+    if (_client) _client.send({ type: 'manual_sell', agent_id: 'A3', posId })
+    log.append(`{yellow-fg}→ manual_sell A3 ${pair} envoyé{/yellow-fg}`)
+    screen.render()
+  })
+
+  list.key(['escape', 'q'], () => { list.destroy(); screen.render() })
+}
+
+function openBlockMenu() {
+  const a3        = _agentsData.find(a => a.id === 'A3')
+  const positions = a3 ? a3.positions : []
+
+  if (!positions.length) {
+    log.append('{yellow-fg}A3 n\'a pas de position ouverte{/yellow-fg}')
+    screen.render()
+    return
+  }
+
+  const items = [
+    ...positions.map(p => {
+      const lock = p.blocked ? '{yellow-fg}[LOCK]{/yellow-fg} ' : '{grey-fg}[    ]{/grey-fg} '
+      const sign = p.unrealisedPct >= 0 ? '+' : ''
+      return `  ${lock}${p.pair.padEnd(10)} $${p.sizeUsd.toFixed(0).padStart(7)}  ${sign}${p.unrealisedPct.toFixed(2)}%`
+    }),
+    '  ─ Annuler'
+  ]
+
+  const list = blessed.list({
+    parent: screen,
+    top: 'center', left: 'center',
+    width: 52, height: items.length + 4,
+    label: ' {yellow-fg}BLOQUER / DÉBLOQUER — A3{/yellow-fg} ',
+    tags: true,
+    border: { type: 'line' },
+    keys: true, vi: true,
+    style: {
+      bg: 'black', fg: 'white',
+      border: { fg: 'yellow', bg: 'black' },
+      selected: { bg: 'yellow', fg: 'black', bold: true }
+    },
+    items
+  })
+  list.focus()
+  screen.render()
+
+  list.on('select', (_item, index) => {
+    list.destroy()
+    screen.render()
+    if (index >= positions.length) return   // Annuler
+    const { posId } = positions[index]
+    if (_client) _client.send({ type: 'manual_toggle_block', agent_id: 'A3', posId })
+    screen.render()
+  })
+
+  list.key(['escape', 'q'], () => { list.destroy(); screen.render() })
+}
+
+function openManualMenu() {
+  const list = blessed.list({
+    parent: screen,
+    top: 'center', left: 'center',
+    width: 36, height: 8,
+    label: ' {cyan-fg}A3 — Action manuelle{/cyan-fg} ',
+    tags: true,
+    border: { type: 'line' },
+    keys: true, vi: true,
+    style: {
+      bg: 'black', fg: 'white',
+      border: { fg: 'cyan', bg: 'black' },
+      selected: { bg: 'cyan', fg: 'black', bold: true }
+    },
+    items: ['  Acheter du BTC', '  Vendre une position', '  Bloquer / Débloquer', '  Annuler']
+  })
+  list.focus()
+  screen.render()
+
+  list.on('select', (_item, index) => {
+    list.destroy()
+    screen.render()
+    if (index === 0) openManualBuyPrompt()
+    else if (index === 1) openManualSellMenu()
+    else if (index === 2) openBlockMenu()
+  })
+
+  list.key(['escape', 'q'], () => { list.destroy(); screen.render() })
+}
+
+screen.key('b', () => openManualMenu())
 
 screen.key(['q', 'Q', 'escape'], () => {
-  if (!dxyOverlay.hidden)  { toggleDxyOverlay();  return }
-  if (!newsOverlay.hidden) { toggleNewsOverlay(); return }
+  if (!dxyOverlay.hidden)      { toggleDxyOverlay();        return }
+  if (!newsOverlay.hidden)     { toggleNewsOverlay();       return }
+  if (!macroHistBox.hidden)    { toggleMacroHistOverlay();  return }
   if (_client) _client.destroy()
   screen.destroy()
   process.exit(0)
@@ -459,6 +818,7 @@ async function seedFromEngine() {
   } catch { /* API not running yet — silent */ }
 }
 
+marketContext.refresh().catch(() => {})
 connect()
 screen.render()
 log.append(`{grey-fg}Connecting to ${HOST}:${PORT}...{/grey-fg}`)

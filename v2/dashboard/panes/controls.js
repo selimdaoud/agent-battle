@@ -45,26 +45,9 @@ function create(parent, screen) {
 
     const line1 = `${pulse} ${connLabel}  ${lastTickStr()}  {grey-fg}up ${uptime()}{/grey-fg}`
     const line2 = `{grey-fg}candles:{/grey-fg} {white-fg}${_candleCount}{/white-fg}  {grey-fg}agents:{/grey-fg} {cyan-fg}${_agentCount.live}L / ${_agentCount.paper}P{/cyan-fg}`
-    const line3 = '{grey-fg}[f] force candle  [a] adapt  [r] reset  [d] DXY  [Q/Esc] quit{/grey-fg}'
+    const line3 = '{grey-fg}[f] force candle  [a] adapt  [r] reset  [d] DXY  [b] buy A3  [Q/Esc] quit{/grey-fg}'
 
-    let line4 = ''
-    if (_macroSignal && _macroSignal.dxy != null) {
-      const { dxy, trend, advice, trading_paused } = _macroSignal
-      const trendArrow = trend === 'falling' ? '{green-fg}↓{/green-fg}' : '{red-fg}↑{/red-fg}'
-      const dot   = advice === 'green' && !trading_paused ? '{green-fg}⬤{/green-fg}' : '{red-fg}⬤{/red-fg}'
-      const label = trading_paused ? '{red-fg}PAUSED{/red-fg}' : advice === 'green' ? '{green-fg}TRADE{/green-fg}' : '{yellow-fg}CAUTION{/yellow-fg}'
-
-      let macroStr = ''
-      if (_btcMacroUp !== null) {
-        const pct = (_btcMacroUp * 100).toFixed(0) + '%'
-        const col = _btcMacroUp >= 0.6 ? '{green-fg}' : _btcMacroUp >= 0.4 ? '{yellow-fg}' : '{red-fg}'
-        macroStr = `  {grey-fg}BTC macro↑{/grey-fg} ${col}${pct}{/${col.slice(1,-1)}}`
-      }
-
-      line4 = `DXY ${dxy.toFixed(1)} ${trendArrow}  ${dot} ${label}${macroStr}`
-    }
-
-    box.setContent([line1, line2, line3, line4].filter(Boolean).join('\n'))
+    box.setContent([line1, line2, line3].join('\n'))
   }
 
   // Animate pulse + refresh last-tick age every second

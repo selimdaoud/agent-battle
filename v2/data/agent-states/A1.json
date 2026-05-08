@@ -1,5 +1,5 @@
 {
-  "capital": 4988.184898402935,
+  "capital": 4811.156937209766,
   "positions": {},
   "tradeHistory": {
     "XLMUSDT": [
@@ -18,12 +18,44 @@
       {
         "win": false,
         "pnl_pct": -0.6916
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.474
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.7717
+      },
+      {
+        "win": true,
+        "pnl_pct": 0.7
+      },
+      {
+        "win": true,
+        "pnl_pct": 2.1669
+      },
+      {
+        "win": true,
+        "pnl_pct": 3.0712
+      },
+      {
+        "win": true,
+        "pnl_pct": 0.8949
       }
     ],
     "SOLUSDT": [
       {
         "win": false,
         "pnl_pct": -0.2995
+      },
+      {
+        "win": true,
+        "pnl_pct": 1.4409
+      },
+      {
+        "win": true,
+        "pnl_pct": 0.773
       }
     ],
     "BNBUSDT": [
@@ -34,6 +66,10 @@
       {
         "win": true,
         "pnl_pct": 0.7656
+      },
+      {
+        "win": false,
+        "pnl_pct": -3.1386
       }
     ],
     "MATICUSDT": [
@@ -58,12 +94,52 @@
       {
         "win": false,
         "pnl_pct": -1.5853
+      },
+      {
+        "win": false,
+        "pnl_pct": -2.1758
+      },
+      {
+        "win": false,
+        "pnl_pct": -2.2858
       }
     ],
     "ATOMUSDT": [
       {
         "win": false,
         "pnl_pct": -0.2436
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.1229
+      },
+      {
+        "win": false,
+        "pnl_pct": -1.1705
+      },
+      {
+        "win": false,
+        "pnl_pct": -1.1679
+      },
+      {
+        "win": true,
+        "pnl_pct": 0.4286
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.5208
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.0781
+      },
+      {
+        "win": true,
+        "pnl_pct": 0.5054
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.8226
       }
     ],
     "DOTUSDT": [
@@ -74,14 +150,124 @@
       {
         "win": true,
         "pnl_pct": 0.133
+      },
+      {
+        "win": true,
+        "pnl_pct": 0.7825
+      },
+      {
+        "win": false,
+        "pnl_pct": -1.2438
+      },
+      {
+        "win": true,
+        "pnl_pct": 0.3479
+      },
+      {
+        "win": false,
+        "pnl_pct": -2.9571
+      },
+      {
+        "win": true,
+        "pnl_pct": 1.0895
       }
     ],
     "XRPUSDT": [
       {
         "win": true,
         "pnl_pct": 1.1554
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.7747
+      }
+    ],
+    "AVAXUSDT": [
+      {
+        "win": false,
+        "pnl_pct": -0.1861
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.6344
+      },
+      {
+        "win": false,
+        "pnl_pct": -1.0698
+      },
+      {
+        "win": false,
+        "pnl_pct": -1.1655
+      }
+    ],
+    "DOGEUSDT": [
+      {
+        "win": false,
+        "pnl_pct": -0.1708
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.3875
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.3234
+      }
+    ],
+    "LINKUSDT": [
+      {
+        "win": true,
+        "pnl_pct": 1.4155
+      },
+      {
+        "win": true,
+        "pnl_pct": 3.7831
+      },
+      {
+        "win": true,
+        "pnl_pct": 0.1248
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.7269
+      },
+      {
+        "win": false,
+        "pnl_pct": -0.4082
+      }
+    ],
+    "BTCUSDT": [
+      {
+        "win": false,
+        "pnl_pct": -1.1966
+      },
+      {
+        "win": true,
+        "pnl_pct": 2.9335
+      },
+      {
+        "win": true,
+        "pnl_pct": 1.396
+      }
+    ],
+    "ADAUSDT": [
+      {
+        "win": true,
+        "pnl_pct": 2.0897
+      },
+      {
+        "win": false,
+        "pnl_pct": -2.8799
+      }
+    ],
+    "LTCUSDT": [
+      {
+        "win": false,
+        "pnl_pct": -2.0014
       }
     ]
   },
-  "tickCount": 138
+  "tickCount": 2806,
+  "spotAccumMacroWasLow": false,
+  "spotAccumMacroDepth": 1
 }
